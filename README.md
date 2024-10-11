@@ -53,3 +53,33 @@ The architecture of the project revolves around the separation of draft generati
    ```bash
    git clone https://github.com/YunhaiHu/MultiDeviceSpeculativeDecoding.git
    cd MultiDeviceSpeculativeDecoding
+2. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+3. Compile the proto files for gRPC communication (ensure protoc is installed):
+   ```bash
+   python -m grpc_tools.protoc -I=. --python_out=. --grpc_python_out=. model_service.proto
+
+### Running the Service
+1. Start the gRPC service to handle token verification
+    ```bash
+    python server.py --model "/path/to/target_model" --port 50051
+
+### Running the Client
+1. Start the client to generate drafts and interact with the service:
+    ```bash
+    python client.py --model "/path/to/draft_model" --max_length 100 --generate_step 8 --method speculative
+2. To compare the speculative method with traditional generation:
+    ```bash
+    python client.py --model "/path/to/draft_model" --max_length 100 --generate_step 8 --method compare
+
+## Future Development
+**Batch Processing:** Support for handling batch requests from multiple users, enabling the system to process multiple speculative decoding tasks simultaneously.
+
+**Variable Length Handling:** Efficiently handle requests from different users with varying input and output lengths, dynamically adjusting the speculative decoding length for each request.
+
+**Optimized Deployment:** Investigate distributed deployment strategies to handle verification models across multiple machines, improving scalability and fault tolerance.
+
+## Contribution
+Contributions are welcome! Please feel free to open issues or submit pull requests to enhance the project.
+
