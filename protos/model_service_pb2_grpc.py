@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import model_service_pb2 as model__service__pb2
+from protos import model_service_pb2 as protos_dot_model__service__pb2
 
 GRPC_GENERATED_VERSION = '1.66.2'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in model_service_pb2_grpc.py depends on'
+        + f' but the generated code in protos/model_service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -36,18 +36,23 @@ class ModelServiceStub(object):
         """
         self.GenerateContent = channel.unary_unary(
                 '/modelservice.ModelService/GenerateContent',
-                request_serializer=model__service__pb2.GenerateContentRequest.SerializeToString,
-                response_deserializer=model__service__pb2.GenerateContentResponse.FromString,
+                request_serializer=protos_dot_model__service__pb2.GenerateContentRequest.SerializeToString,
+                response_deserializer=protos_dot_model__service__pb2.GenerateContentResponse.FromString,
+                _registered_method=True)
+        self.UpdateToken = channel.unary_unary(
+                '/modelservice.ModelService/UpdateToken',
+                request_serializer=protos_dot_model__service__pb2.UpdateTokenRequest.SerializeToString,
+                response_deserializer=protos_dot_model__service__pb2.UpdateTokenResponse.FromString,
                 _registered_method=True)
         self.VerifyTokens = channel.unary_unary(
                 '/modelservice.ModelService/VerifyTokens',
-                request_serializer=model__service__pb2.VerifyTokensRequest.SerializeToString,
-                response_deserializer=model__service__pb2.VerifyTokensResponse.FromString,
+                request_serializer=protos_dot_model__service__pb2.VerifyTokensRequest.SerializeToString,
+                response_deserializer=protos_dot_model__service__pb2.VerifyTokensResponse.FromString,
                 _registered_method=True)
         self.PrepareSpeculative = channel.unary_unary(
                 '/modelservice.ModelService/PrepareSpeculative',
-                request_serializer=model__service__pb2.PrepareSpeculativeRequest.SerializeToString,
-                response_deserializer=model__service__pb2.PrepareSpeculativeResponse.FromString,
+                request_serializer=protos_dot_model__service__pb2.PrepareSpeculativeRequest.SerializeToString,
+                response_deserializer=protos_dot_model__service__pb2.PrepareSpeculativeResponse.FromString,
                 _registered_method=True)
 
 
@@ -55,6 +60,12 @@ class ModelServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def GenerateContent(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateToken(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -77,18 +88,23 @@ def add_ModelServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'GenerateContent': grpc.unary_unary_rpc_method_handler(
                     servicer.GenerateContent,
-                    request_deserializer=model__service__pb2.GenerateContentRequest.FromString,
-                    response_serializer=model__service__pb2.GenerateContentResponse.SerializeToString,
+                    request_deserializer=protos_dot_model__service__pb2.GenerateContentRequest.FromString,
+                    response_serializer=protos_dot_model__service__pb2.GenerateContentResponse.SerializeToString,
+            ),
+            'UpdateToken': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateToken,
+                    request_deserializer=protos_dot_model__service__pb2.UpdateTokenRequest.FromString,
+                    response_serializer=protos_dot_model__service__pb2.UpdateTokenResponse.SerializeToString,
             ),
             'VerifyTokens': grpc.unary_unary_rpc_method_handler(
                     servicer.VerifyTokens,
-                    request_deserializer=model__service__pb2.VerifyTokensRequest.FromString,
-                    response_serializer=model__service__pb2.VerifyTokensResponse.SerializeToString,
+                    request_deserializer=protos_dot_model__service__pb2.VerifyTokensRequest.FromString,
+                    response_serializer=protos_dot_model__service__pb2.VerifyTokensResponse.SerializeToString,
             ),
             'PrepareSpeculative': grpc.unary_unary_rpc_method_handler(
                     servicer.PrepareSpeculative,
-                    request_deserializer=model__service__pb2.PrepareSpeculativeRequest.FromString,
-                    response_serializer=model__service__pb2.PrepareSpeculativeResponse.SerializeToString,
+                    request_deserializer=protos_dot_model__service__pb2.PrepareSpeculativeRequest.FromString,
+                    response_serializer=protos_dot_model__service__pb2.PrepareSpeculativeResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -116,8 +132,35 @@ class ModelService(object):
             request,
             target,
             '/modelservice.ModelService/GenerateContent',
-            model__service__pb2.GenerateContentRequest.SerializeToString,
-            model__service__pb2.GenerateContentResponse.FromString,
+            protos_dot_model__service__pb2.GenerateContentRequest.SerializeToString,
+            protos_dot_model__service__pb2.GenerateContentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateToken(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/modelservice.ModelService/UpdateToken',
+            protos_dot_model__service__pb2.UpdateTokenRequest.SerializeToString,
+            protos_dot_model__service__pb2.UpdateTokenResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -143,8 +186,8 @@ class ModelService(object):
             request,
             target,
             '/modelservice.ModelService/VerifyTokens',
-            model__service__pb2.VerifyTokensRequest.SerializeToString,
-            model__service__pb2.VerifyTokensResponse.FromString,
+            protos_dot_model__service__pb2.VerifyTokensRequest.SerializeToString,
+            protos_dot_model__service__pb2.VerifyTokensResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -170,8 +213,8 @@ class ModelService(object):
             request,
             target,
             '/modelservice.ModelService/PrepareSpeculative',
-            model__service__pb2.PrepareSpeculativeRequest.SerializeToString,
-            model__service__pb2.PrepareSpeculativeResponse.FromString,
+            protos_dot_model__service__pb2.PrepareSpeculativeRequest.SerializeToString,
+            protos_dot_model__service__pb2.PrepareSpeculativeResponse.FromString,
             options,
             channel_credentials,
             insecure,

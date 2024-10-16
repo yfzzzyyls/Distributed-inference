@@ -4,6 +4,7 @@ package modelservice;
 
 service ModelService {
   rpc GenerateContent (GenerateContentRequest) returns (GenerateContentResponse);
+  rpc UpdateToken (UpdateTokenRequest) returns (UpdateTokenResponse);
   rpc VerifyTokens (VerifyTokensRequest) returns (VerifyTokensResponse);
   rpc PrepareSpeculative (PrepareSpeculativeRequest) returns (PrepareSpeculativeResponse);
 }
@@ -16,9 +17,19 @@ message FloatArray2D {
   repeated FloatArray rows = 1;
 }
 
+message UpdateTokenRequest {
+  string user_uuid  = 1;
+  int64 index = 2;
+  string input_text = 3;
+  FloatArray2D generated_logits = 4;
+}
+
+message UpdateTokenResponse {
+  bool updated = 1;
+}
+
 message VerifyTokensRequest {
-  string input_text = 1;
-  FloatArray2D generated_logits = 2;
+  string user_uuid = 1;
 }
 
 message VerifyTokensResponse {
@@ -26,7 +37,12 @@ message VerifyTokensResponse {
 }
 
 message PrepareSpeculativeRequest {
-  string input_text = 1;
+  string user_uuid = 1;
+  string prompt = 2;
+  int64 max_length = 3;
+  int64 generate_step = 4;
+  bool exact_mode = 5;
+  bool debug_mode = 6;
 }
 
 message PrepareSpeculativeResponse {
@@ -34,7 +50,9 @@ message PrepareSpeculativeResponse {
 }
 
 message GenerateContentRequest {
-  string prompt = 1;  // 输入提示，可以为空字符串
+  string user_uuid = 1;
+  string prompt = 2;  // 输入提示，可以为空字符串
+  int64 max_length = 3;
 }
 
 message GenerateContentResponse {
