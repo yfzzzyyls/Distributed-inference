@@ -33,7 +33,9 @@ message VerifyTokensRequest {
 }
 
 message VerifyTokensResponse {
-  string verified_tokens = 1;
+  bool finished = 1;
+  int64 passed_num = 2;
+  string verified_tokens = 3;
 }
 
 message PrepareSpeculativeRequest {

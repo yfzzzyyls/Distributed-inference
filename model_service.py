@@ -179,9 +179,9 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         user_uuid = request.user_uuid
 
         # Verify the tokens
-        verified_tokens = self.verify_tokens(user_uuid)
+        finished, passed_tokens, verified_tokens = self.verify_tokens(user_uuid)
 
-        return protos.model_service_pb2.VerifyTokensResponse(verified_tokens=verified_tokens)
+        return protos.model_service_pb2.VerifyTokensResponse(finished=finished, passed_tokens=passed_tokens, verified_tokens=verified_tokens)
 
     def verify_tokens(self, user_uuid: str) -> str:
         """
@@ -195,6 +195,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             str: The verified tokens as decoded text.
         """
         try:
+            finished = False
             max_length, generate_step, exact_mode, debug_mode = self.config_manager.get_user_config(user_uuid)
             input_text = self.user_data[user_uuid]["tokens"] + "".join(self.user_data[user_uuid]["drafts"])
             if debug_mode:
@@ -257,8 +258,13 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             else:
                 combined_tokens = input_ids_flat + verified_tokens
 
-            decoded_text = self.tokenizer.decode(combined_tokens, skip_special_tokens=True)
+            decoded_text = self.tokenizer.decode(verified_tokens)
 
+            if verified_tokens[0] == self.tokenizer.eos_token_id:
+                if debug_mode:
+                    print("End token found")
+                finished = True
+                decoded_text = ""
             
             if debug_mode:
                 print(f"verified_tokens: {n}")
@@ -266,7 +272,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
 
             self.user_data[user_uuid]["tokens"] = decoded_text
             self.user_data[user_uuid]["logits"] = torch.zeros((1, generate_step, self.model.config.vocab_size), device=self.device)
-            return decoded_text
+            return finished, n, decoded_text
 
         except Exception as e:
             traceback.print_exc()

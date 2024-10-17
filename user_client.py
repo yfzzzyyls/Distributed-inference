@@ -113,8 +113,21 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
         token_response = stub.VerifyTokens(token_request)
 
         # 更新输出文本为验证通过的 tokens
-        output_text = token_response.verified_tokens
-        print(f"已验证的 tokens: {output_text}")
+        if token_response.finished:
+            if debug_mode:
+                print("已完成生成")
+            break
+        
+        passed_tokens = token_response.passed_tokens
+        verified_tokens = tokenizer.encode(token_response.verified_tokens, return_tensors='pt').to(device)
+
+        if passed_tokens < generate_step:
+            input_ids = torch.cat((input_ids[0, :-generate_step + passed_tokens], verified_tokens), dim=1).to(device)
+        else:
+            input_ids = torch.cat((input_ids, verified_tokens), dim=1).to(device)
+
+    if debug_mode:
+        print(f"已验证的 tokens: {tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
 
     # output_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
     end_time = time.time()  # 记录结束时间
