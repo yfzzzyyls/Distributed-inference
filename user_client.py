@@ -132,7 +132,7 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
             if debug_mode:
                 print(f"已验证的 tokens: {tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
 
-    # output_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
+    output_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
     end_time = time.time()  # 记录结束时间
     print(f"Speculative 生成过程执行时间：{end_time - start_time} 秒")
 
