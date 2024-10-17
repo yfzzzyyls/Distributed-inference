@@ -13,7 +13,7 @@ def load_model_and_tokenizer(model_name, quantize_config):
     """
     加载模型和 tokenizer，并返回模型、tokenizer 和词汇表大小。
     """
-    tokenizer = AutoTokenizer.from_pretrained("/home/apc/llama/Llama-3.1-8B-Instruct")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=quantize_config)
     model.eval()  # 设置为评估模式
     vocabulary_size = model.config.vocab_size
@@ -165,11 +165,12 @@ def main():
     parser.add_argument('--max_length', type=int, default=50, help='最大生成长度')
     parser.add_argument('--generate_step', type=int, default=6, help='每次生成的 tokens 数')
     parser.add_argument('--method', type=str, choices=['speculative', 'traditional', 'compare'], default='speculative', help='选择生成方法')
+    parser.add_argument('--server_address', type=str, default='localhost:2024', help='服务器地址')    
     args = parser.parse_args()
 
     # 配置
     MODEL_NAME = args.model  # 模型路径
-    SERVER_ADDRESS = 'localhost:2024'  # 服务器地址
+    SERVER_ADDRESS = args.server_address  # 服务器地址
     debug_mode = True if args.debug else False
     draft_quantize = QuantoConfig(weights="int4") if args.quantize else None
     max_length = args.max_length  # 最大生成长度
