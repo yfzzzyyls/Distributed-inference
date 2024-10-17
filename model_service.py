@@ -46,7 +46,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             target_quantize = QuantoConfig(weights="int4")
             self.model = AutoModelForCausalLM.from_pretrained(model_path, quantization_config=target_quantize)
         else:
-            self.model = AutoModelForCausalLM.from_pretrained(model_path)
+            self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16)
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.target_cache = None
@@ -54,7 +54,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         self.model.eval()
         self.config_manager = UserConfigManager()
         self.STORAGE_DIR = './user_data'
-        self.user_data = defaultdict(lambda: {"tokens": "", "logits": None})
+        self.user_data = defaultdict(lambda: {"tokens": "", "drafts": None, "logits": None})
 
     # 从文件加载用户数据（如果存在）
     def load_user_data(self, uuid):
@@ -126,6 +126,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         # Convert tensor to text
         generated_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
         self.user_data[user_uuid]["tokens"] = generated_text
+        self.user_data[user_uuid]["drafts"] = [None] * generate_step
         self.user_data[user_uuid]["logits"] = torch.zeros((1, generate_step, self.model.config.vocab_size), device=device)
         return generated_text
     
@@ -160,7 +161,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         return protos.model_service_pb2.UpdateTokenResponse(updated=update_success)
 
     def update_token(self, user_uuid, k, new_token: str, new_logits: torch.Tensor) -> str:
-        self.user_data[user_uuid]["tokens"] += new_token
+        self.user_data[user_uuid]["drafts"][k] = new_token
         self.user_data[user_uuid]["logits"][0, k] = new_logits.to(self.device)
         return True
 
@@ -195,7 +196,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         """
         try:
             max_length, generate_step, exact_mode, debug_mode = self.config_manager.get_user_config(user_uuid)
-            input_text = self.user_data[user_uuid]["tokens"]
+            input_text = self.user_data[user_uuid]["tokens"] + "".join(self.user_data[user_uuid]["drafts"])
             if debug_mode:
                 # print("logits shape: ", len(self.user_data[user_uuid]["logits"]))
                 print(f"input_text: {input_text}")
@@ -205,14 +206,25 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
 
             Mp = self.model(
                 input_ids=input_ids,
-                past_key_values=self.target_cache,
+                past_key_values=self.target_cache, 
                 use_cache=False,
-            )
+            ) 
             self.target_cache = Mp.past_key_values
             draft_logits = Mp.logits[..., -generate_step-1: -1, :]
             p = draft_logits
 
-            if not exact_mode:
+            x = torch.argmax(p, dim=-1).unsqueeze(-1)
+            target_tokens = x.squeeze().tolist()
+
+            if isinstance(target_tokens, int):
+                target_tokens = [target_tokens]
+            
+            n = generate_step
+            for i, token in enumerate(target_tokens):
+                if token != input_ids[0, -generate_step + i - 1]:
+                    n = i
+
+            '''if not exact_mode:
                 r = torch.rand(generate_step, device=self.device)
             else:
                 r = torch.ones(generate_step, device=self.device) 
@@ -220,9 +232,9 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             fractions = p / q
             n = generate_step
             for i in range(generate_step):
-                if r[i] > fractions[0, i, input_ids[0, -generate_step + i]]:
+                if r[i] >= fractions[0, i, input_ids[0, -generate_step + i]]:
                     n = i
-                    break
+                    break'''
 
             p_p = Mp.logits[..., -generate_step + n - 1, :]
             x = torch.argmax(p_p, dim=-1).unsqueeze(-1)
@@ -230,6 +242,8 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
 
             if isinstance(verified_tokens, int):
                 verified_tokens = [verified_tokens]
+
+            print(f"verified_tokens length: {n}")
 
             input_ids_flat = input_ids.squeeze(0).tolist()
             
@@ -326,7 +340,7 @@ def serve(port: int, model_path: str, quantize: bool) -> None:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='启动模型服务')
     parser.add_argument('--port', type=int, default=50051, help='指定监听的端口')
-    parser.add_argument('--model-path', type=str, default="/home/apc/llama/Llama-3.2-1B-Instruct", help='指定模型路径')
+    parser.add_argument('--model-path', type=str, default="/home/apc/llama/Llama-3.1-8B-Instruct", help='指定模型路径')
     parser.add_argument('--quantize', action='store_true', help='是否启用量化')
     args = parser.parse_args()
 

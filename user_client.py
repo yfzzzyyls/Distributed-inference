@@ -13,7 +13,7 @@ def load_model_and_tokenizer(model_name, quantize_config):
     """
     加载模型和 tokenizer，并返回模型、tokenizer 和词汇表大小。
     """
-    tokenizer = AutoTokenizer.from_pretrained("/home/apc/llama/Llama-3.2-1B-Instruct")
+    tokenizer = AutoTokenizer.from_pretrained("/home/apc/llama/Llama-3.1-8B-Instruct")
     model = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=quantize_config)
     model.eval()  # 设置为评估模式
     vocabulary_size = model.config.vocab_size
