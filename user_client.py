@@ -67,17 +67,17 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
         if debug_mode:
             print(type(uuid), type(prompt), type(max_length), type(generate_step))
 
-        prepare_request = protos.model_service_pb2.PrepareSpeculativeRequest(user_uuid = uuid, prompt=prompt, max_length=max_length, generate_step=generate_step, exact_mode=False, debug_mode=False)
+        prepare_request = protos.model_service_pb2.PrepareSpeculativeRequest(user_uuid = uuid, prompt=prompt, max_length=max_length, generate_step=generate_step, exact_mode=True, debug_mode=True)
         prepare_response = stub.PrepareSpeculative(prepare_request)
         first_tokens = prepare_response.first_tokens  # 这是一个 token ID 列表
         # print(f"第一个 token: {first_tokens}")
         output_text = first_tokens
         total_generated += 1
 
+    input_ids = tokenizer.encode(output_text, return_tensors='pt').to(device)
     # print("max_length: ", max_length)
     while total_generated < max_length:
         q = torch.zeros((1, generate_step, vocabulary_size), device=device)
-        input_ids = tokenizer.encode(output_text, return_tensors='pt').to(device)
         total_generated = len(input_ids[0])
         if total_generated >= max_length:
             # print("已达到最大生成长度")
@@ -101,7 +101,7 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
 
             logits_to_send = draft_logits.detach().cpu().numpy().tolist()  # 转换为列表
 
-            # print(f"已生成的 tokens: {draft_output}")
+            print(f"已生成的 tokens: {draft_output}")
             task = loop.create_task(process_step(queue, k, stub, uuid, draft_output, logits_to_send))
             tasks.append(task)
 
@@ -120,14 +120,18 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
         
         passed_tokens = token_response.passed_tokens
         verified_tokens = tokenizer.encode(token_response.verified_tokens, return_tensors='pt').to(device)
+        if debug_mode:
+            print(f"已通过的 tokens 数: {passed_tokens}")
+            print(f"已通过的 tokens: {token_response.verified_tokens}")
 
         if passed_tokens < generate_step:
-            input_ids = torch.cat((input_ids[0, :-generate_step + passed_tokens], verified_tokens), dim=1).to(device)
+            input_ids = torch.cat((input_ids[0][:-generate_step + passed_tokens].unsqueeze(0), verified_tokens), dim=1).to(device)
+            if debug_mode:
+                print(f"已验证的 tokens: {tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
         else:
             input_ids = torch.cat((input_ids, verified_tokens), dim=1).to(device)
-
-    if debug_mode:
-        print(f"已验证的 tokens: {tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
+            if debug_mode:
+                print(f"已验证的 tokens: {tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
 
     # output_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
     end_time = time.time()  # 记录结束时间

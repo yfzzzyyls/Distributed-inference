@@ -258,21 +258,21 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             else:
                 combined_tokens = input_ids_flat + verified_tokens
 
-            decoded_text = self.tokenizer.decode(verified_tokens)
+            verified_text = self.tokenizer.decode(verified_tokens)
 
             if verified_tokens[0] == self.tokenizer.eos_token_id:
                 if debug_mode:
                     print("End token found")
                 finished = True
-                decoded_text = ""
+                verified_text = ""
             
             if debug_mode:
                 print(f"verified_tokens: {n}")
-                print(f"verified_tokens: {decoded_text}")
+                print(f"verified_tokens: {verified_text}")
 
-            self.user_data[user_uuid]["tokens"] = decoded_text
+            self.user_data[user_uuid]["tokens"] = self.tokenizer.decode(combined_tokens, skip_special_tokens=True)
             self.user_data[user_uuid]["logits"] = torch.zeros((1, generate_step, self.model.config.vocab_size), device=self.device)
-            return finished, n, decoded_text
+            return finished, n, verified_text
 
         except Exception as e:
             traceback.print_exc()
