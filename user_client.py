@@ -19,30 +19,29 @@ def load_model_and_tokenizer(model_name, quantize_config):
     vocabulary_size = model.config.vocab_size
     return tokenizer, model, vocabulary_size
 
-def update_token(stub, uuid, k, draft_output, logits_to_send):
-     # 构建 FloatArray 列表
-    float_array_list = [protos.model_service_pb2.FloatArray(values=row) for row in logits_to_send]
+def update_token(stub, uuid, k, draft_output):
+    # 构建 FloatArray 列表
+    #float_array_list = [protos.model_service_pb2.FloatArray(values=row) for row in logits_to_send]
 
     # 构建 FloatArray2D 对象
-    float_array_2d = protos.model_service_pb2.FloatArray2D(rows=float_array_list)
+    #float_array_2d = protos.model_service_pb2.FloatArray2D(rows=float_array_list)
 
     token_update_request = protos.model_service_pb2.UpdateTokenRequest(
         user_uuid=uuid,
         index = k,
         input_text=draft_output,
-        generated_logits=float_array_2d
     )
 
     return stub.UpdateToken(token_update_request)
 
-async def process_step(queue, step_index, stub, uuid, draft_output, logits_to_send):
+async def process_step(queue, step_index, stub, uuid, draft_output):
     loop = asyncio.get_running_loop()
     
     # 将计算和同步的 update_token 调用放入异步任务
     result = await loop.run_in_executor(
         None,  # 使用默认的线程池执行器
         update_token,  # 调用的同步函数
-        stub, uuid, step_index, draft_output, logits_to_send  # 参数
+        stub, uuid, step_index, draft_output  # 参数
     )
     
     # 将结果按顺序放入队列中
@@ -102,7 +101,7 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
             logits_to_send = draft_logits.detach().cpu().numpy().tolist()  # 转换为列表
 
             print(f"已生成的 tokens: {draft_output}")
-            task = loop.create_task(process_step(queue, k, stub, uuid, draft_output, logits_to_send))
+            task = loop.create_task(process_step(queue, k, stub, uuid, draft_output))
             tasks.append(task)
 
         loop.run_until_complete(asyncio.gather(*tasks))

@@ -21,7 +21,6 @@ message UpdateTokenRequest {
   string user_uuid  = 1;
   int64 index = 2;
   string input_text = 3;
-  FloatArray2D generated_logits = 4;
 }
 
 message UpdateTokenResponse {

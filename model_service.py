@@ -144,25 +144,25 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         user_uuid = request.user_uuid
         k = request.index
         input_text = request.input_text
-        generated_logits = request.generated_logits
+        #generated_logits = request.generated_logits
 
         # Convert logits from request to tensor
-        logits_list = []
-        for float_array in generated_logits.rows:
-            logits_list.append(float_array.values)
+        # logits_list = []
+        # for float_array in generated_logits.rows:
+        #     logits_list.append(float_array.values)
 
-        logits_tensor = torch.tensor(logits_list, dtype=torch.float32)
+        # logits_tensor = torch.tensor(logits_list, dtype=torch.float32)
         # print(f"Received input text: {input_text}")
         # print(f"Received logits tensor: {logits_tensor.shape}")
 
         # Verify the tokens
-        update_success = self.update_token(user_uuid, k, input_text, logits_tensor)
+        update_success = self.update_token(user_uuid, k, input_text)
 
         return protos.model_service_pb2.UpdateTokenResponse(updated=update_success)
 
-    def update_token(self, user_uuid, k, new_token: str, new_logits: torch.Tensor) -> str:
+    def update_token(self, user_uuid, k, new_token: str) -> str:
         self.user_data[user_uuid]["drafts"][k] = new_token
-        self.user_data[user_uuid]["logits"][0, k] = new_logits.to(self.device)
+        #self.user_data[user_uuid]["logits"][0, k] = new_logits.to(self.device)
         return True
 
     def VerifyTokens(self, request: protos.model_service_pb2.VerifyTokensRequest, context: grpc.ServicerContext) -> protos.model_service_pb2.VerifyTokensResponse:

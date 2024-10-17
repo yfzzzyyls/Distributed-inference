@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1aprotos/model_service.proto\x12\x0cmodelservice\"\x1c\n\nFloatArray\x12\x0e\n\x06values\x18\x01 \x03(\x02\"6\n\x0c\x46loatArray2D\x12&\n\x04rows\x18\x01 \x03(\x0b\x32\x18.modelservice.FloatArray\"\x80\x01\n\x12UpdateTokenRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\x12\r\n\x05index\x18\x02 \x01(\x03\x12\x12\n\ninput_text\x18\x03 \x01(\t\x12\x34\n\x10generated_logits\x18\x04 \x01(\x0b\x32\x1a.modelservice.FloatArray2D\"&\n\x13UpdateTokenResponse\x12\x0f\n\x07updated\x18\x01 \x01(\x08\"(\n\x13VerifyTokensRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\"X\n\x14VerifyTokensResponse\x12\x10\n\x08\x66inished\x18\x01 \x01(\x08\x12\x15\n\rpassed_tokens\x18\x02 \x01(\x03\x12\x17\n\x0fverified_tokens\x18\x03 \x01(\t\"\x91\x01\n\x19PrepareSpeculativeRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_length\x18\x03 \x01(\x03\x12\x15\n\rgenerate_step\x18\x04 \x01(\x03\x12\x12\n\nexact_mode\x18\x05 \x01(\x08\x12\x12\n\ndebug_mode\x18\x06 \x01(\x08\"2\n\x1aPrepareSpeculativeResponse\x12\x14\n\x0c\x66irst_tokens\x18\x01 \x01(\t\"O\n\x16GenerateContentRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_length\x18\x03 \x01(\x03\"1\n\x17GenerateContentResponse\x12\x16\n\x0egenerated_text\x18\x01 \x01(\t2\x82\x03\n\x0cModelService\x12^\n\x0fGenerateContent\x12$.modelservice.GenerateContentRequest\x1a%.modelservice.GenerateContentResponse\x12R\n\x0bUpdateToken\x12 .modelservice.UpdateTokenRequest\x1a!.modelservice.UpdateTokenResponse\x12U\n\x0cVerifyTokens\x12!.modelservice.VerifyTokensRequest\x1a\".modelservice.VerifyTokensResponse\x12g\n\x12PrepareSpeculative\x12\'.modelservice.PrepareSpeculativeRequest\x1a(.modelservice.PrepareSpeculativeResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1aprotos/model_service.proto\x12\x0cmodelservice\"\x1c\n\nFloatArray\x12\x0e\n\x06values\x18\x01 \x03(\x02\"6\n\x0c\x46loatArray2D\x12&\n\x04rows\x18\x01 \x03(\x0b\x32\x18.modelservice.FloatArray\"J\n\x12UpdateTokenRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\x12\r\n\x05index\x18\x02 \x01(\x03\x12\x12\n\ninput_text\x18\x03 \x01(\t\"&\n\x13UpdateTokenResponse\x12\x0f\n\x07updated\x18\x01 \x01(\x08\"(\n\x13VerifyTokensRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\"X\n\x14VerifyTokensResponse\x12\x10\n\x08\x66inished\x18\x01 \x01(\x08\x12\x15\n\rpassed_tokens\x18\x02 \x01(\x03\x12\x17\n\x0fverified_tokens\x18\x03 \x01(\t\"\x91\x01\n\x19PrepareSpeculativeRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_length\x18\x03 \x01(\x03\x12\x15\n\rgenerate_step\x18\x04 \x01(\x03\x12\x12\n\nexact_mode\x18\x05 \x01(\x08\x12\x12\n\ndebug_mode\x18\x06 \x01(\x08\"2\n\x1aPrepareSpeculativeResponse\x12\x14\n\x0c\x66irst_tokens\x18\x01 \x01(\t\"O\n\x16GenerateContentRequest\x12\x11\n\tuser_uuid\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x12\n\nmax_length\x18\x03 \x01(\x03\"1\n\x17GenerateContentResponse\x12\x16\n\x0egenerated_text\x18\x01 \x01(\t2\x82\x03\n\x0cModelService\x12^\n\x0fGenerateContent\x12$.modelservice.GenerateContentRequest\x1a%.modelservice.GenerateContentResponse\x12R\n\x0bUpdateToken\x12 .modelservice.UpdateTokenRequest\x1a!.modelservice.UpdateTokenResponse\x12U\n\x0cVerifyTokens\x12!.modelservice.VerifyTokensRequest\x1a\".modelservice.VerifyTokensResponse\x12g\n\x12PrepareSpeculative\x12\'.modelservice.PrepareSpeculativeRequest\x1a(.modelservice.PrepareSpeculativeResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,22 +35,22 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_FLOATARRAY']._serialized_end=72
   _globals['_FLOATARRAY2D']._serialized_start=74
   _globals['_FLOATARRAY2D']._serialized_end=128
-  _globals['_UPDATETOKENREQUEST']._serialized_start=131
-  _globals['_UPDATETOKENREQUEST']._serialized_end=259
-  _globals['_UPDATETOKENRESPONSE']._serialized_start=261
-  _globals['_UPDATETOKENRESPONSE']._serialized_end=299
-  _globals['_VERIFYTOKENSREQUEST']._serialized_start=301
-  _globals['_VERIFYTOKENSREQUEST']._serialized_end=341
-  _globals['_VERIFYTOKENSRESPONSE']._serialized_start=343
-  _globals['_VERIFYTOKENSRESPONSE']._serialized_end=431
-  _globals['_PREPARESPECULATIVEREQUEST']._serialized_start=434
-  _globals['_PREPARESPECULATIVEREQUEST']._serialized_end=579
-  _globals['_PREPARESPECULATIVERESPONSE']._serialized_start=581
-  _globals['_PREPARESPECULATIVERESPONSE']._serialized_end=631
-  _globals['_GENERATECONTENTREQUEST']._serialized_start=633
-  _globals['_GENERATECONTENTREQUEST']._serialized_end=712
-  _globals['_GENERATECONTENTRESPONSE']._serialized_start=714
-  _globals['_GENERATECONTENTRESPONSE']._serialized_end=763
-  _globals['_MODELSERVICE']._serialized_start=766
-  _globals['_MODELSERVICE']._serialized_end=1152
+  _globals['_UPDATETOKENREQUEST']._serialized_start=130
+  _globals['_UPDATETOKENREQUEST']._serialized_end=204
+  _globals['_UPDATETOKENRESPONSE']._serialized_start=206
+  _globals['_UPDATETOKENRESPONSE']._serialized_end=244
+  _globals['_VERIFYTOKENSREQUEST']._serialized_start=246
+  _globals['_VERIFYTOKENSREQUEST']._serialized_end=286
+  _globals['_VERIFYTOKENSRESPONSE']._serialized_start=288
+  _globals['_VERIFYTOKENSRESPONSE']._serialized_end=376
+  _globals['_PREPARESPECULATIVEREQUEST']._serialized_start=379
+  _globals['_PREPARESPECULATIVEREQUEST']._serialized_end=524
+  _globals['_PREPARESPECULATIVERESPONSE']._serialized_start=526
+  _globals['_PREPARESPECULATIVERESPONSE']._serialized_end=576
+  _globals['_GENERATECONTENTREQUEST']._serialized_start=578
+  _globals['_GENERATECONTENTREQUEST']._serialized_end=657
+  _globals['_GENERATECONTENTRESPONSE']._serialized_start=659
+  _globals['_GENERATECONTENTRESPONSE']._serialized_end=708
+  _globals['_MODELSERVICE']._serialized_start=711
+  _globals['_MODELSERVICE']._serialized_end=1097
 # @@protoc_insertion_point(module_scope)
