@@ -313,7 +313,9 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
 
                     generated_token_ids.append(next_token_id.item())
                     input_ids = torch.cat([input_ids, next_token_id.unsqueeze(0)], dim=1)
-
+                    if next_token_id[0] == self.tokenizer.eos_token_id:
+                        break
+                    
             all_tokens = self.tokenizer.encode(prompt) + generated_token_ids
             decoded_text = self.tokenizer.decode(all_tokens, skip_special_tokens=True)
             torch.cuda.empty_cache()
