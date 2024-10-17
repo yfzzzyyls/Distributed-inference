@@ -14,6 +14,8 @@ import threading
 from collections import defaultdict
 import json
 import os
+import socket
+
 
 class UserConfigManager:
     def __init__(self):
@@ -162,6 +164,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
 
     def update_token(self, user_uuid, k, new_token: str) -> str:
         self.user_data[user_uuid]["drafts"][k] = new_token
+        print (f"updated uuid {user_uuid} token: {new_token}")
         #self.user_data[user_uuid]["logits"][0, k] = new_logits.to(self.device)
         return True
 
@@ -315,7 +318,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
                     input_ids = torch.cat([input_ids, next_token_id.unsqueeze(0)], dim=1)
                     if next_token_id[0] == self.tokenizer.eos_token_id:
                         break
-                    
+
             all_tokens = self.tokenizer.encode(prompt) + generated_token_ids
             decoded_text = self.tokenizer.decode(all_tokens, skip_special_tokens=True)
             torch.cuda.empty_cache()
@@ -327,7 +330,20 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             torch.cuda.empty_cache()
             return protos.model_service_pb2.GenerateContentResponse(generated_text="")
 
-
+def get_local_ip():
+    try:
+        # 创建一个UDP连接
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # 连接到外部网络（比如Google的公共DNS），不会真正发送数据
+        s.connect(('8.8.8.8', 80))
+        # 获取本地 IP 地址
+        ip_address = s.getsockname()[0]
+        s.close()
+        return ip_address
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+    
 def serve(port: int, model_path: str, quantize: bool) -> None:
     """
     Start the gRPC server to serve model-related requests.
@@ -343,7 +359,8 @@ def serve(port: int, model_path: str, quantize: bool) -> None:
             ModelServiceServicer(model_path, quantize), server)
         server.add_insecure_port(f'[::]:{port}')
         server.start()
-        print(f"服务器已启动，监听端口 {port}")
+        local_ip = get_local_ip()
+        print(f"服务器已启动，监听端口 {local_ip}:{port}")
         server.wait_for_termination()
     except Exception as e:
         print(f"Failed to start the server on port {port}: {e}")
