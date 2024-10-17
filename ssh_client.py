@@ -6,7 +6,7 @@ import protos.model_service_pb2_grpc
 import time
 import argparse
 import uuid
-import asyncio
+import concurrent.futures
 
 
 def load_model_and_tokenizer(model_name, quantize_config):
@@ -34,19 +34,6 @@ def update_token(stub, uuid, k, draft_output):
 
     return stub.UpdateToken(token_update_request)
 
-async def process_step(queue, step_index, stub, uuid, draft_output):
-    loop = asyncio.get_running_loop()
-    
-    # 将计算和同步的 update_token 调用放入异步任务
-    result = await loop.run_in_executor(
-        None,  # 使用默认的线程池执行器
-        update_token,  # 调用的同步函数
-        stub, uuid, step_index, draft_output  # 参数
-    )
-    
-    # 将结果按顺序放入队列中
-    await queue.put((step_index, result))
-
 def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, max_length, generate_step):
     """
     与 gRPC 服务进行交互，执行 token 验证和生成任务（speculative 模式）。
@@ -56,10 +43,9 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
     total_generated = 0  # 已生成的 tokens 数
     first_target = True
     output_text = ""
-    loop = asyncio.get_event_loop()
-    queue = asyncio.Queue()
     
     start_time = time.time()  # 记录开始时间
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=generate_step)
 
     if first_target:
         # 运行目标模型获取第一个 token
@@ -76,13 +62,13 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
     input_ids = tokenizer.encode(output_text, return_tensors='pt').to(device)
     # print("max_length: ", max_length)
     while total_generated < max_length:
-        q = torch.zeros((1, generate_step, vocabulary_size), device=device)
         total_generated = len(input_ids[0])
         if total_generated >= max_length:
             # print("已达到最大生成长度")
             break
         
         tasks = []
+        draft_output = [None for _ in range(generate_step)]
         for k in range(generate_step):
             with torch.no_grad():
                 Mq = model(
@@ -92,19 +78,13 @@ def grpc_client(stub, uuid, prompt, model, tokenizer, device, vocabulary_size, m
                 )
             drafter_cache = Mq.past_key_values
             draft_logits = Mq.logits[..., -1, :]
-            q[0, k] = draft_logits.to(device)
             xi = torch.argmax(draft_logits, dim=-1).unsqueeze(-1)
             input_ids = torch.cat((input_ids, xi), dim=1).to(device)
+            draft_output[k] = tokenizer.decode(xi[0], skip_special_tokens=True)
 
-            draft_output = tokenizer.decode(xi[0], skip_special_tokens=True)
+            tasks.append(executor.submit(update_token, stub, uuid, k, draft_output[k]))
 
-            logits_to_send = draft_logits.detach().cpu().numpy().tolist()  # 转换为列表
-
-            print(f"已生成的 tokens: {draft_output}")
-            task = loop.create_task(process_step(queue, k, stub, uuid, draft_output))
-            tasks.append(task)
-
-        loop.run_until_complete(asyncio.gather(*tasks))
+        concurrent.futures.wait(tasks)
         # 发送生成的 tokens 进行验证
         token_request = protos.model_service_pb2.VerifyTokensRequest(
             user_uuid=uuid
@@ -191,7 +171,7 @@ def main():
     draft_quantize = QuantoConfig(weights="int4") if args.quantize else None
     max_length = args.max_length  # 最大生成长度
     generate_step = args.generate_step  # 每次生成的 tokens 数
-
+    
     # 加载模型和 tokenizer
     tokenizer, model, vocabulary_size = load_model_and_tokenizer(MODEL_NAME, draft_quantize)
 
