@@ -215,26 +215,31 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
 
             x = torch.argmax(p, dim=-1).unsqueeze(-1)
             target_tokens = x.squeeze().tolist()
+            # print(f"target_tokens: {target_tokens},target_tokens length: {len(target_tokens)}")
 
             if isinstance(target_tokens, int):
                 target_tokens = [target_tokens]
             
             n = generate_step
             for i, token in enumerate(target_tokens):
-                if token != input_ids[0, -generate_step + i - 1]:
+                print(f"token: {token}, input_ids: {input_ids[0, -generate_step + i]}")
+                if token != input_ids[0, -generate_step + i]:
                     n = i
+                    break
 
-            '''if not exact_mode:
-                r = torch.rand(generate_step, device=self.device)
-            else:
-                r = torch.ones(generate_step, device=self.device) 
-
-            fractions = p / q
-            n = generate_step
-            for i in range(generate_step):
-                if r[i] >= fractions[0, i, input_ids[0, -generate_step + i]]:
-                    n = i
-                    break'''
+            #if not exact_mode:
+            #    r = torch.rand(generate_step, device=self.device)
+            #else:
+            #    r = torch.ones(generate_step, device=self.device) 
+#
+            #print(f"shape of p: {p.shape}, shape of q: {q.shape}")
+            #fractions = p / q
+            #n = generate_step
+            #for i in range(generate_step):
+            #    print(f"fraction: {fractions[0, i, input_ids[0, -generate_step + i]]}")
+            #    if r[i] > fractions[0, i, input_ids[0, -generate_step + i]]:
+            #        n = i
+            #        break
 
             p_p = Mp.logits[..., -generate_step + n - 1, :]
             x = torch.argmax(p_p, dim=-1).unsqueeze(-1)
@@ -243,7 +248,7 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
             if isinstance(verified_tokens, int):
                 verified_tokens = [verified_tokens]
 
-            print(f"verified_tokens length: {n}")
+            # print(f"verified_tokens length: {n}")
 
             input_ids_flat = input_ids.squeeze(0).tolist()
             
