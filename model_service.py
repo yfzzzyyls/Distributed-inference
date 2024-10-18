@@ -298,11 +298,14 @@ class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
         self.target_cache = None
         max_length = request.max_length
 
+        print(f"start traditional generate for {user_uuid}")
+
         try:
             input_ids = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
             generated_token_ids = []
 
             while len(input_ids[0]) < max_length:
+                print(f"Current traditional gengerated text: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
                 with torch.no_grad():
                     outputs = self.model(
                         input_ids=input_ids,

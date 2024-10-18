@@ -9,7 +9,7 @@ import gevent
 import concurrent.futures
 
 class ModelServiceClient:
-    def __init__(self, model_name=None, model=None, tokenizer=None, server_address='localhost:2024', quantize=False, max_length=50, generate_step=6):
+    def __init__(self, model_name=None, model=None, tokenizer=None, server_address='localhost:2024', quantize=False, max_length=50, generate_step=6, debug_mode=False):
         """
         初始化 gRPC 客户端，支持通过 model_name 加载模型或直接传入预加载的模型和 tokenizer。
         """
@@ -18,6 +18,7 @@ class ModelServiceClient:
         self.generate_step = generate_step
         self.generated_uuid = str(uuid.uuid4())
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=generate_step)
+        self.debug_mode = debug_mode
 
         # 如果没有传入模型和 tokenizer，则根据 model_name 来加载
         if model is None or tokenizer is None:
@@ -161,7 +162,7 @@ class ModelServiceClient:
                 max_length=self.max_length,
                 generate_step=self.generate_step,
                 exact_mode=True,
-                debug_mode=True
+                debug_mode=self.debug_mode
             )
             prepare_response = self.stub.PrepareSpeculative(prepare_request)
             first_tokens = prepare_response.first_tokens  # 这是一个 token ID 列表
@@ -207,7 +208,7 @@ class ModelServiceClient:
                 break
 
             passed_tokens = token_response.passed_tokens
-            print(f"passed tokens: {token_response.verified_tokens}")
+            #print(f"passed tokens: {token_response.verified_tokens}")
             verified_tokens = self.tokenizer.encode(token_response.verified_tokens, return_tensors='pt').to(self.device)
             if passed_tokens < self.generate_step:
                 #drafter_cache = tuple(
