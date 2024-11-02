@@ -107,8 +107,9 @@ class BatchClient:
                 print(f"Draft output: {draft_output}")
                 self.add_request(request_id, "update", draft_output)   
                 timestamps.append(time.time())      
-                
+            
             verified_text = self.add_request(request_id, "verify", "")
+            print(f"Verified.")
             timestamps.append(time.time())
             #print(f"Verified text: {verified_text}")
             
