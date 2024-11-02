@@ -72,11 +72,11 @@ class BatchClient:
             input_ids = self.tokenizer.encode(verified_text, return_tensors='pt').to(self.device)
             new_length = len(input_ids[0])
             passed_length = new_length - old_length
-            print(f"Passed length: {passed_length}")
+            #print(f"Passed length: {passed_length}")
             length += passed_length
             if self.use_cache:
                 if 0 < passed_length < generate_step+1:
-                    print(f"Last Past key values: {past_key_values[0][0].shape}")
+                    #print(f"Last Past key values: {past_key_values[0][0].shape}")
                     past_key_values = tuple(
                                         tuple(
                                             tensor[:, :, :-generate_step-1 + passed_length, :] 
@@ -84,10 +84,10 @@ class BatchClient:
                                         )
                                         for inner_tuple in past_key_values
                                     )
-                    print(f"Cutted Past key values: {past_key_values[0][0].shape}")
+                    #print(f"Cutted Past key values: {past_key_values[0][0].shape}")
                 if passed_length > 0:
                     input_ids = input_ids[:, -1:]
-                    print(input_ids)
+                    #print(input_ids)
             old_length = new_length
             for _ in range(generate_step):
                 with torch.no_grad():
@@ -111,7 +111,7 @@ class BatchClient:
                 
             verified_text = self.add_request(request_id, "verify", "")
             timestamps.append(time.time())
-            print(f"Verified text: {verified_text}")
+            #print(f"Verified text: {verified_text}")
             
 
         # 等待处理完成

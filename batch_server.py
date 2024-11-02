@@ -121,7 +121,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                 inputs = self.tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
                 input_ids = inputs.input_ids.to(self.device)
                 attention_mask = inputs.attention_mask.to(self.device)
-                print(f"Processing batch: {texts}, {input_ids}")
+                #print(f"Processing batch: {texts}, {input_ids}")
 
                 with torch.no_grad():
                     Mp = self.model(
@@ -151,10 +151,10 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                         predicted_token_ids = target_logits[i][-generate_step-1:, :].argmax(dim=-1)
 
                         # 解码预测的 token 和对应输入的 token
-                        predicted_text = self.tokenizer.decode(predicted_token_ids, skip_special_tokens=True)
-                        draft_text = self.tokenizer.decode(input_ids[i][-generate_step:], skip_special_tokens=True)
+                        #predicted_text = self.tokenizer.decode(predicted_token_ids, skip_special_tokens=True)
+                        #draft_text = self.tokenizer.decode(input_ids[i][-generate_step:], skip_special_tokens=True)
                         n = generate_step
-                        print(f"predicted_text: {predicted_text}, draft_text: {draft_text}")
+                        #print(f"predicted_text: {predicted_text}, draft_text: {draft_text}")
                         for j in range(generate_step):
                             if predicted_token_ids[j] == input_ids[i][-generate_step+j]:
                                 continue
@@ -167,7 +167,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                             verified_text[i] = self.tokenizer.decode(input_ids[i][:-generate_step+n], skip_special_tokens=True) + self.tokenizer.decode(predicted_token_ids[n], skip_special_tokens=True)
 
                         # 比较预测和输入文本
-                        print(f"Sample {i+1}")
+                        #print(f"Sample {i+1}")
                         print("Match:", verified_text[i])
 
                 # 存储批处理结果并通知等待的请求
