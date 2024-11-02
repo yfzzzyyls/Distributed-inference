@@ -147,6 +147,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                     elif job_type == "verify":
                         # 对 `draft_logits` 中的第 i 个序列进行 `argmax`
                         print(f"verify batch id: {i}, input_text: {texts[i]}")
+                        generate_step = self.args.gamma
                         predicted_token_ids = target_logits[i][-generate_step-1:, :].argmax(dim=-1)
 
                         # 解码预测的 token 和对应输入的 token

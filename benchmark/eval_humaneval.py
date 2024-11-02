@@ -35,7 +35,7 @@ class EvalHumaneval(BatchClient):
         process_id = self.accelerator.process_index
 
         # 统计文件的总行数
-        file_path = os.path.join("/home/apc/NYU/SaiLab/Distributed_SD/MultiDeviceSpeculativeDecoding/data", "humaneval.jsonl")
+        file_path = os.path.join(self.args.data_path, "humaneval.jsonl")
         with open(file_path, 'r') as f:
             total_lines = sum(1 for _ in f)
 
@@ -89,7 +89,7 @@ class EvalHumaneval(BatchClient):
             input_text = datum["input_text"]
             #input_ids = datum["input_ids"]
             start_time = time.time()
-            generate_ids, timestamps = self.speculative_decoding(input_text, self.args.max_tokens)
+            generate_ids, timestamps = self.speculative_decoding(input_text)
             end_time = time.time()
             if datum["task_id"] != "HumanEval/0":
                 # skip the first prompt time consumption

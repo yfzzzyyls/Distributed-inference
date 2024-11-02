@@ -54,6 +54,9 @@ class BatchClient:
 
     def speculative_decoding(self, prompt, max_length=20, generate_step=4):
         """使用 speculative decoding 生成文本"""
+        generate_step = self.args.gamma
+        max_length = self.args.max_length
+        
         timestamps = []
         timestamps.append(time.time())
         request_id = str(uuid.uuid4().hex)
