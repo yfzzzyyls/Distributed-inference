@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package batch;
+
+service BatchService {
+  // AddRequest 直接返回处理完成的结果
+  rpc AddRequest(Request) returns (ResultResponse);
+}
+
+message Request {
+  string request_id = 1;
+  string request_type = 2;  // 类型，可为 "init", "update", "verify"
+  string text = 3;          // 请求的文本
+}
+
+message ResultResponse {
+  string request_id = 1;        // 请求的 ID
+  string verified_text = 2;     // 处理完成后的已验证文本
+}
