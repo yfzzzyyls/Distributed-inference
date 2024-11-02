@@ -24,10 +24,9 @@ class BatchClient:
 
     def load_model(self):
         quantization_config = QuantoConfig(weights="int4")
-        self.model = AutoModelForCausalLM.from_pretrained(self.args.draft_model, torch_dtype=torch.float16)  # 替换成实际的模型路径
+        self.model = AutoModelForCausalLM.from_pretrained(self.args.draft_model, device_map=f"cuda:{self.accelerator.process_index}", torch_dtype=torch.float16)  # 替换成实际的模型路径
         self.tokenizer = AutoTokenizer.from_pretrained(self.args.draft_model)
-        self.device = torch.device(f"cuda:{self.accelerator.process_index}" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
+        self.device = self.model.device
 
         if self.tokenizer.pad_token is None:
             if self.tokenizer.eos_token:
