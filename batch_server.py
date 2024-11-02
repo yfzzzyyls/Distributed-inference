@@ -104,7 +104,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
             batch = []
 
             # 从请求队列中收集请求，直到达到批次大小或超时
-            while len(batch) < BATCH_SIZE and (time.time() - start_time) < MAX_WAIT_TIME:
+            while len(batch) < self.args.batch_size and (time.time() - start_time) < MAX_WAIT_TIME:
                 if request_queue:
                     request = request_queue.pop(0)
                     req_id = request["request_id"]
