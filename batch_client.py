@@ -6,6 +6,7 @@ from accelerate import Accelerator
 import torch
 import time
 import uuid
+from utils import parse_arguments
 
 
 class BatchClient:
@@ -122,8 +123,7 @@ class BatchClient:
 # 示例使用
 if __name__ == "__main__":
     # 初始化客户端
-    client = BatchClient(host="localhost", port=50051)
-    
+    args = parse_arguments()
+    client = BatchClient(args)
     ans, timestamps = client.speculative_decoding("The quick brown fox jumps over the lazy dog.")
-
     print(f"timestamps: {timestamps}")
