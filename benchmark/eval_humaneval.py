@@ -88,14 +88,14 @@ class EvalHumaneval(BatchClient):
             input_text = datum["input_text"]
             #input_ids = datum["input_ids"]
             start_time = time.time()
-            generate_ids, timestamps = self.speculative_decoding(input_text, 40)
+            generate_ids, timestamps = self.speculative_decoding(input_text, self.args.max_tokens)
             end_time = time.time()
             if datum["task_id"] != "HumanEval/0":
                 # skip the first prompt time consumption
                 wall_times["time"].append(end_time-start_time)
-                wall_times["num_tokens"].append(40)
+                wall_times["num_tokens"].append(self.args.max_tokens)
             output = generate_ids
-            out_f.write(json.dumps({"task_id": datum["task_id"], "time": end_time-start_time, "new_tokens": 40, "completion": output}, ensure_ascii=False) + "\n")
+            out_f.write(json.dumps({"task_id": datum["task_id"], "time": end_time-start_time, "new_tokens":  self.args.max_tokens, "completion": output}, ensure_ascii=False) + "\n")
             out_f.flush()
         
         out_f.close()
@@ -138,7 +138,7 @@ def parse_arguments():
     parser.add_argument('--eval_mode', type=str, default="small", choices=["small", "large", "sd", "para_sd", "para_sd_wo_1", "para_sd_wo_2"], help='eval mode.')
     parser.add_argument('--num_samples_per_task', '-n', type=int, default=1, help='num_samples for a task (prompt) in humaneval dataset.')
     parser.add_argument('--seed', '-s', type=int, default=1234, help='set a random seed, which can makes the result reproducible')
-    parser.add_argument('--max_tokens', type=int, default=1024, help='max token number generated.')
+    parser.add_argument('--max_tokens', type=int, default=128, help='max token number generated.')
     parser.add_argument('--temp', type=float, default=0.2, help='temperature for generating new tokens.')
     parser.add_argument('--top_k', type=int, default=0, help='top_k for ungreedy sampling strategy.')
     parser.add_argument('--top_p', type=float, default=0.95, help='top_p for ungreedy sampling strategy.')
