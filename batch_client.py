@@ -24,9 +24,12 @@ class BatchClient:
 
     def load_model(self):
         quantization_config = QuantoConfig(weights="int4")
-        self.model = AutoModelForCausalLM.from_pretrained(self.args.draft_model, device_map=f"cuda:{self.accelerator.process_index}", torch_dtype=torch.float16)  # 替换成实际的模型路径
+        device_id = f"cuda:{self.accelerator.process_index}"
+    
+        # 使用 to() 将模型加载到指定的 GPU
+        self.model = AutoModelForCausalLM.from_pretrained(self.args.draft_model, torch_dtype=torch.float16).to(device_id)
         self.tokenizer = AutoTokenizer.from_pretrained(self.args.draft_model)
-        self.device = self.model.device
+        self.device = torch.device(device_id)  # 设置设备为指定 GPU
 
         if self.tokenizer.pad_token is None:
             if self.tokenizer.eos_token:
