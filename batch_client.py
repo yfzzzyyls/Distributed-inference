@@ -6,30 +6,34 @@ import torch
 import time
 import uuid
 
-# 加载模型和 tokenizer
-quantization_config = QuantoConfig(weights="int4")
-model_path = "/home/apc/llama/Qwen2.5-0.5B-Instruct"
-model = AutoModelForCausalLM.from_pretrained(model_path)  # 替换成实际的模型路径
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
-
-if tokenizer.pad_token is None:
-    if tokenizer.eos_token:
-        tokenizer.pad_token = tokenizer.eos_token
-    else:
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-        model.resize_token_embeddings(len(tokenizer))
-tokenizer.padding_side = "left"
-
-use_cache = False
 
 class BatchClient:
-    def __init__(self, host='localhost', port=50051):
+    def __init__(self, host='localhost', port=50051, model_path="/home/apc/llama/Qwen2.5-0.5B-Instruct", device='cuda', use_cache=False):
         # 连接到 gRPC 服务器
         self.channel = grpc.insecure_channel(f'{host}:{port}')
         self.stub = batch_pb2_grpc.BatchServiceStub(self.channel)
+        # 加载模型和 tokenizer
+        quantization_config = QuantoConfig(weights="int4")
+        model_path = model_path
+        self.model = AutoModelForCausalLM.from_pretrained(model_path)  # 替换成实际的模型路径
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+        if device == 'cuda':
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        
+        self.model.to(self.device)
+
+        if self.tokenizer.pad_token is None:
+            if self.tokenizer.eos_token:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+                self.model.resize_token_embeddings(len(self.tokenizer))
+        self.tokenizer.padding_side = "left"
+
+        self.use_cache = use_cache
 
     def add_request(self, request_id, request_type, text):
         """发送请求到服务器并等待返回已验证文本"""
@@ -56,16 +60,16 @@ class BatchClient:
         verified_text = self.add_request(request_id, "init", prompt)
         timestamps.append(time.time())
         print(f"Initialized text: {verified_text}")
-        old_length = len(tokenizer.encode(verified_text, return_tensors='pt').to(device)[0])
+        old_length = len(self.tokenizer.encode(verified_text, return_tensors='pt').to(self.device)[0])
         past_key_values = None
 
         while length < max_length:
-            input_ids = tokenizer.encode(verified_text, return_tensors='pt').to(device)
+            input_ids = self.tokenizer.encode(verified_text, return_tensors='pt').to(self.device)
             new_length = len(input_ids[0])
             passed_length = new_length - old_length
             print(f"Passed length: {passed_length}")
             length += passed_length
-            if use_cache:
+            if self.use_cache:
                 if 0 < passed_length < generate_step+1:
                     print(f"Last Past key values: {past_key_values[0][0].shape}")
                     past_key_values = tuple(
@@ -82,20 +86,20 @@ class BatchClient:
             old_length = new_length
             for _ in range(generate_step):
                 with torch.no_grad():
-                    Mq = model(
+                    Mq = self.model(
                         input_ids=input_ids,
                         past_key_values=past_key_values,
-                        use_cache=use_cache,
+                        use_cache=self.use_cache,
                     )
                 past_key_values = Mq.past_key_values
                 draft_logits = Mq.logits[..., -1, :]
                 xi = torch.argmax(draft_logits, dim=-1).unsqueeze(-1)
-                if use_cache:
-                    input_ids = xi.to(device)
+                if self.use_cache:
+                    input_ids = xi.to(self.device)
                 else:
-                    input_ids = torch.cat((input_ids, xi), dim=1).to(device)
+                    input_ids = torch.cat((input_ids, xi), dim=1).to(self.device)
 
-                draft_output = tokenizer.decode(xi[0], skip_special_tokens=True)
+                draft_output = self.tokenizer.decode(xi[0], skip_special_tokens=True)
                 print(f"Draft output: {draft_output}")
                 self.add_request(request_id, "update", draft_output)   
                 timestamps.append(time.time())      
