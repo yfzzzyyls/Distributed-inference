@@ -81,7 +81,7 @@ class EvalHumaneval(BatchClient):
     @torch.no_grad()
     def eval(self):  
         print(f"Start evaluating...")
-        out_path = os.path.join("/home/apc/NYU/SaiLab/Distributed_SD/MultiDeviceSpeculativeDecoding/result", f"Qwen_humaneval.jsonl")
+        out_path = os.path.join(self.args.exp_name, f"Qwen_humaneval.jsonl")
         out_f = open(out_path, "a")
         wall_times = {"time":[], "num_tokens":[]}
 
