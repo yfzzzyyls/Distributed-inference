@@ -109,6 +109,7 @@ class BatchClient:
                 timestamps.append(time.time())      
                 
             verified_text = self.add_request(request_id, "verify", "")
+            print(f"Verified Successfully.")
             timestamps.append(time.time())
             #print(f"Verified text: {verified_text}")
             
