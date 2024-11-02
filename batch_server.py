@@ -10,7 +10,7 @@ import torch
 # 加载模型和 tokenizer
 model_path = "/home/apc/llama/Qwen2.5-0.5B-Instruct"
 quantize = QuantoConfig(weights="int4")
-model = AutoModelForCausalLM.from_pretrained(model_path)  # 替换成实际的模型路径
+model = AutoModelForCausalLM.from_pretrained(model_path, device_map="balanced_low_0", torch_dtype=torch.float16)  # 替换成实际的模型路径
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)

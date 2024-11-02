@@ -11,40 +11,52 @@ import concurrent.futures
 import numpy as np
 from collections import Counter
 from batch_client import BatchClient
+import argparse
 
-class EvalHumaneval():
-    def __init__(self, client_num=4, host='localhost', port=50051, model_path="/home/apc/llama/Qwen2.5-0.5B-Instruct"):
-        super().__init__()
-        self.client_num = client_num
+
+class EvalHumaneval(BatchClient):
+    def __init__(self, args):
+        super().__init__(args)
+        self.client_num = self.accelerator.num_processes
 
         # load relative resources
+        self.load_model()
         self.load_data()
-        self.init_client(host, port, model_path)
         
         self.draft_time = []
         self.target_time = []
         self.acc_num = []
-    
-    def init_client(self, host, port, model_path):
-        self.clients = []
-        for i in range(self.client_num):
-            client = BatchClient(host, port, model_path)
-            self.clients.append(client)
 
     def load_data(self):
         # * load evaluation data
-        print(f"Loading HumanEval data...", 3)
+        print(f"Loading HumanEval data...", 3)     
+        num_processes = self.accelerator.num_processes
+        process_id = self.accelerator.process_index
+
+        # 统计文件的总行数
+        file_path = os.path.join("/home/apc/NYU/SaiLab/Distributed_SD/MultiDeviceSpeculativeDecoding/data", "humaneval.jsonl")
+        with open(file_path, 'r') as f:
+            total_lines = sum(1 for _ in f)
+
+        # 计算每个进程应读取的行范围
+        lines_per_process = total_lines // num_processes
+        start_line = process_id * lines_per_process
+        end_line = start_line + lines_per_process if process_id < num_processes - 1 else total_lines
+
+        # 读取文件中对应行数的分片
         data = []
-        with open(os.path.join("/home/apc/NYU/SaiLab/Distributed_SD/MultiDeviceSpeculativeDecoding/data", "humaneval.jsonl")) as f:
-            for line in f.readlines():
+        with open(file_path, 'r') as f:
+            for i, line in enumerate(f):
+                if i < start_line:
+                    continue
+                elif i >= end_line:
+                    break
                 datum = json.loads(line)
                 datum["input_text"] = self.preprocess(datum["prompt"])
-                #encode_special_token_flag = not ("Llama-3.1" in self.args.draft_model and "Llama-3.1" in self.args.target_model)
-                #input_ids = self.tokenizer.encode(datum["input_text"], add_special_tokens=False)
-                #datum["input_ids"] = torch.tensor(input_ids).unsqueeze(0)
                 data.append(datum)
         
-        self.data = np.array_split(data, self.client_num)
+        self.data = data
+        print(f"Process {process_id} loaded {len(data)} items from lines {start_line} to {end_line}.")
     
     def preprocess(self, input_text):
         text = input_text.strip()
@@ -66,17 +78,17 @@ class EvalHumaneval():
         return output_text
              
     @torch.no_grad()
-    def client_decode(self, client, data):  
+    def eval(self):  
         print(f"Start evaluating...")
         out_path = os.path.join("/home/apc/NYU/SaiLab/Distributed_SD/MultiDeviceSpeculativeDecoding/result", f"Qwen_humaneval.jsonl")
         out_f = open(out_path, "a")
         wall_times = {"time":[], "num_tokens":[]}
 
-        for datum in tqdm.tqdm(data, total=len(data), ncols=50):
+        for datum in tqdm.tqdm(self.data, total=len(self.data), ncols=50):
             input_text = datum["input_text"]
             #input_ids = datum["input_ids"]
             start_time = time.time()
-            generate_ids, timestamps = client.speculative_decoding(input_text, 40)
+            generate_ids, timestamps = self.speculative_decoding(input_text, 40)
             end_time = time.time()
             if datum["task_id"] != "HumanEval/0":
                 # skip the first prompt time consumption
@@ -108,28 +120,35 @@ class EvalHumaneval():
         #        self.color_print(f"Mean accepted tokens: {sum(self.num_acc_tokens) / len(self.num_acc_tokens)}")
         #    except:
         #        pass
+
+def parse_arguments():
+    """Specified arguments for running scripts."""
+    parser = argparse.ArgumentParser(description='args for this file')
     
-    def eval(self):
-        start = time.time()
-        #print(self.clients, self.data)
-        print(f"Start evaluating...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.client_num) as executor:
-            futures = [
-                        executor.submit(self.client_decode, self.clients[i], self.data[i]) 
-                        for i in range(self.client_num)  
-                    ]
-        concurrent.futures.wait(futures)
+    parser.add_argument('--data_path', type=str, default="/home/apc/NYU/SaiLab/Distributed_SD/MultiDeviceSpeculativeDecoding/data")
 
-        for i, future in enumerate(futures):
-            try:
-                # 使用 result() 来检查每个 future 的结果
-                result = future.result()  # 如果线程中出现异常，这里会抛出异常
-            except Exception as e:
-                print(f"Error in thread {i}: {e}")
+    parser.add_argument('--draft_model', type=str, default="/home/apc/llama/Qwen2.5-0.5B-Instruct")
+    #parser.add_argument('--target_model', type=str, default="codellama-70b")
+    
+    parser.add_argument('--host', type=str, default="localhost")
+    parser.add_argument('--port', type=str, default="50051")
+    parser.add_argument('--use_cache', type=bool, default=False)
 
-        print(f"Total time: {time.time()-start}")
-        
+    parser.add_argument('--exp_name', '-e', type=str, default="test", help='folder name for storing results.')
+    parser.add_argument('--eval_mode', type=str, default="small", choices=["small", "large", "sd", "para_sd", "para_sd_wo_1", "para_sd_wo_2"], help='eval mode.')
+    parser.add_argument('--num_samples_per_task', '-n', type=int, default=1, help='num_samples for a task (prompt) in humaneval dataset.')
+    parser.add_argument('--seed', '-s', type=int, default=1234, help='set a random seed, which can makes the result reproducible')
+    parser.add_argument('--max_tokens', type=int, default=1024, help='max token number generated.')
+    parser.add_argument('--temp', type=float, default=0.2, help='temperature for generating new tokens.')
+    parser.add_argument('--top_k', type=int, default=0, help='top_k for ungreedy sampling strategy.')
+    parser.add_argument('--top_p', type=float, default=0.95, help='top_p for ungreedy sampling strategy.')
+    parser.add_argument('--gamma', type=int, default=4, help='guess time.')
+    args = parser.parse_args()
+    args.exp_name = os.path.join(os.getcwd(), "exp", args.exp_name)
+    os.makedirs(args.exp_name, exist_ok=True)
+    return args
 
 if __name__ == "__main__":
-    alg = EvalHumaneval(1)
+    args = parse_arguments()
+    alg = EvalHumaneval(args)
     alg.eval()

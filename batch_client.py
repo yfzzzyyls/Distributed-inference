@@ -2,27 +2,30 @@ import grpc
 import protos.batch_pb2 as batch_pb2
 import protos.batch_pb2_grpc as batch_pb2_grpc
 from transformers import AutoModelForCausalLM, AutoTokenizer, QuantoConfig
+from accelerate import Accelerator
 import torch
 import time
 import uuid
 
 
 class BatchClient:
-    def __init__(self, host='localhost', port=50051, model_path="/home/apc/llama/Qwen2.5-0.5B-Instruct", device='cuda', use_cache=False):
-        # 连接到 gRPC 服务器
-        self.channel = grpc.insecure_channel(f'{host}:{port}')
-        self.stub = batch_pb2_grpc.BatchServiceStub(self.channel)
-        # 加载模型和 tokenizer
-        quantization_config = QuantoConfig(weights="int4")
-        model_path = model_path
-        self.model = AutoModelForCausalLM.from_pretrained(model_path)  # 替换成实际的模型路径
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+    def __init__(self, args):
+        self.args = args
+        self.accelerator = Accelerator()
 
-        if device == 'cuda':
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device(device)
-        
+        # 连接到 gRPC 服务器
+        print(f"process number: {self.accelerator.num_processes}")
+
+        self.channel = grpc.insecure_channel(f'{self.args.host}:{self.args.port}')
+        self.stub = batch_pb2_grpc.BatchServiceStub(self.channel)
+        self.use_cache = self.args.use_cache
+        self.load_model()
+
+    def load_model(self):
+        quantization_config = QuantoConfig(weights="int4")
+        self.model = AutoModelForCausalLM.from_pretrained(self.args.draft_model, torch_dtype=torch.float16)  # 替换成实际的模型路径
+        self.tokenizer = AutoTokenizer.from_pretrained(self.args.draft_model)
+        self.device = torch.device(f"cuda:{self.accelerator.process_index}" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
         if self.tokenizer.pad_token is None:
@@ -32,8 +35,6 @@ class BatchClient:
                 self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
                 self.model.resize_token_embeddings(len(self.tokenizer))
         self.tokenizer.padding_side = "left"
-
-        self.use_cache = use_cache
 
     def add_request(self, request_id, request_type, text):
         """发送请求到服务器并等待返回已验证文本"""
