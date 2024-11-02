@@ -120,6 +120,13 @@ class EvalHumaneval():
                     ]
         concurrent.futures.wait(futures)
 
+        for i, future in enumerate(futures):
+            try:
+                # 使用 result() 来检查每个 future 的结果
+                result = future.result()  # 如果线程中出现异常，这里会抛出异常
+            except Exception as e:
+                print(f"Error in thread {i}: {e}")
+
         print(f"Total time: {time.time()-start}")
         
 
