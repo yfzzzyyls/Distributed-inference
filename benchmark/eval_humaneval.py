@@ -122,6 +122,29 @@ class EvalHumaneval(BatchClient):
         #    except:
         #        pass
 
+    @torch.no_grad()
+    def eval_parallel(self):  
+        print(f"Start evaluating...")
+        out_path = os.path.join(self.args.exp_name, f"Qwen_humaneval.jsonl")
+        out_f = open(out_path, "a")
+        wall_times = {"time":[], "num_tokens":[]}
+
+        for datum in tqdm.tqdm(self.data, total=len(self.data), ncols=50):
+            input_text = datum["input_text"]
+            #input_ids = datum["input_ids"]
+            start_time = time.time()
+            generate_ids, timestamps = self.speculative_decoding_parallel_with_chunked(input_text)
+            end_time = time.time()
+            if datum["task_id"] != "HumanEval/0":
+                # skip the first prompt time consumption
+                wall_times["time"].append(end_time-start_time)
+                wall_times["num_tokens"].append(self.args.max_tokens)
+            output = generate_ids
+            out_f.write(json.dumps({"task_id": datum["task_id"], "time": end_time-start_time, "new_tokens":  self.args.max_tokens, "completion": output}, ensure_ascii=False) + "\n")
+            out_f.flush()
+        
+        out_f.close()
+
 if __name__ == "__main__":
     args = parse_arguments()
     alg = EvalHumaneval(args)
