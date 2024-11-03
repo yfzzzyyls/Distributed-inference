@@ -308,9 +308,14 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                 text = task[2]
                 past_key_values = request_past_key_values.get(req_id, None)
                 past_sequence_length = past_key_values[0][0].shape[2] if past_key_values else 0
-                
+
+                if job_type == "init":
+                    generate_step = 1
+                else:
+                    generate_step = int(task[3])+1
+                    
                 total_input_ids = self.tokenizer.encode(text, return_tensors="pt").to(self.device)
-                input_ids = total_input_ids if past_key_values is None else total_input_ids[:, past_sequence_length:]
+                input_ids = total_input_ids if past_key_values is None else total_input_ids[:, -generate_step:]
                 
                 # print(f"input_ids: {input_ids}, input_length: {input_ids.shape}, past_sequence_length: {past_sequence_length}")
                 # input_ids = inputs.input_ids.to(self.device)

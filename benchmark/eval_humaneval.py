@@ -148,4 +148,4 @@ class EvalHumaneval(BatchClient):
 if __name__ == "__main__":
     args = parse_arguments()
     alg = EvalHumaneval(args)
-    alg.eval()
+    alg.eval_parallel()
