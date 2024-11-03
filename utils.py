@@ -12,7 +12,7 @@ def parse_arguments():
     
     parser.add_argument('--host', type=str, default="localhost")
     parser.add_argument('--port', type=str, default="50051")
-    parser.add_argument('--use_cache', type=bool, default=False)
+    parser.add_argument('--use_cache', type=bool, default=True)
 
     parser.add_argument('--exp_name', '-e', type=str, default="./exp", help='folder name for storing results.')
     parser.add_argument('--eval_mode', type=str, default="small", choices=["small", "large", "sd", "para_sd", "para_sd_wo_1", "para_sd_wo_2"], help='eval mode.')

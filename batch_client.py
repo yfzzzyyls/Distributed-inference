@@ -139,10 +139,13 @@ class BatchClient:
                 self.add_request(request_id, "update", draft_output)   
                 timestamps.append(time.time())      
                 
-            verified_text = self.add_request(request_id, "verify", "")
+            verified_text = self.add_request(request_id, "verify", str(generate_step))
             print(f"Verified Successfully.")
             timestamps.append(time.time())
             #print(f"Verified text: {verified_text}")
+        print(f"final text: {verified_text}")
+        self.add_request(request_id, "delete", " "+str(length))
+        return verified_text, timestamps
         
     def speculative_decoding_parallel(self, prompt, max_length=20, generate_step=4):
         """使用 speculative decoding 生成文本"""
@@ -155,24 +158,18 @@ class BatchClient:
         # 模拟发送请求
         length = 0
         verified_text_future = self.add_async_request(request_id, "init", prompt)
-        timestamps.append(time.time())
         input_text = prompt
         input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
         old_input_ids = input_ids
         old_length = len(old_input_ids[0])
         past_key_values = None
-
         cur_mode = True
 
         while length < max_length:
-            new_length = len(input_ids[0])
-            passed_length = new_length - old_length
-            old_input_ids = input_ids 
-            old_length = len(old_input_ids[0])
-            #print(f"Passed length: {passed_length}")
-            length += passed_length
+            draft_ids = input_ids.new_empty((0,))
             draft_outputs = ""
-            while not verified_text_future.done():
+
+            while not verified_text_future.done(): 
                 with torch.no_grad():
                     Mq = self.model(
                         input_ids=input_ids,
@@ -186,24 +183,26 @@ class BatchClient:
                     input_ids = xi.to(self.device)
                 else:
                     input_ids = torch.cat((input_ids, xi), dim=1).to(self.device)
-
+                
+                draft_ids = torch.cat((draft_ids, xi), dim=1).to(self.device)
                 draft_outputs += self.tokenizer.decode(xi[0], skip_special_tokens=True)
                 timestamps.append(time.time()) 
 
             verified_text = verified_text_future.result().verified_text
             verified_ids = self.tokenizer.encode(verified_text, return_tensors='pt').to(self.device)
-            draft_ids = self.tokenizer.encode(draft_outputs, return_tensors='pt').to(self.device)
             if cur_mode:
                 #print(f"verified text: {verified_text}")
                 #print(f"Draft output: {draft_outputs}")
                 if verified_ids[0][-1] == draft_ids[0][0]:
-                    print(f"cur_mode: {not cur_mode}")
+                    print(f"cur_mode")
                     cur_mode = False
-                    input_ids = torch.cat((verified_ids, draft_ids[:,1:]), dim=1).to(self.device)
-                    self.add_request(request_id, "update", self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)) 
+                    input_ids = input_ids.to(self.device)
+                    draft_outputs = self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)
+                    print(f"Draft output: {draft_outputs}")
+                    self.add_request(request_id, "update", draft_outputs) 
                     verified_text_future = self.add_async_request(request_id, "verify", str(len(draft_ids[0])-1))
                 else:
-                    print(f"cur_mode failue: {not cur_mode}")
+                    print(f"cur_mode conitnue")
                     input_text = verified_text
                     input_ids = verified_ids
                     verified_text_future = self.add_async_request(request_id, "init", verified_text)
@@ -211,13 +210,14 @@ class BatchClient:
                 #print(f"verified text: {verified_text}")
                 #print(f"Draft output: {draft_outputs}")
                 #print(f"input_text: {input_text}")
-                if torch.equal(verified_ids[0][:old_length], old_input_ids[0]) and verified_ids[0][-1]  == draft_ids[0][0]:
-                    print(f"cur_mode continue: {not cur_mode}")
+                print(f"verified_text: {verified_ids[0][-5:]}, old_: {old_input_ids[0][-5:]}")
+                if torch.equal(verified_ids[0][:-1], old_input_ids[0]) and verified_ids[0][-1]  == draft_ids[0][0]:
+                    print(f"not cur_mode")
                     input_ids = torch.cat((verified_ids, draft_ids[:,1:]), dim=1).to(self.device)
                     self.add_request(request_id, "update", self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)) 
                     verified_text_future = self.add_async_request(request_id, "verify", str(len(draft_ids[0])-1))
                 else:
-                    print(f"cur_mode continue failue: {not cur_mode}")
+                    print(f"not cur_mode failue")
                     input_ids = verified_ids
                     cur_mode = True
                     verified_text_future = self.add_async_request(request_id, "init", verified_text)
@@ -226,19 +226,119 @@ class BatchClient:
             print(f"Next forward input_ids: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
             # input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
             timestamps.append(time.time())
-              
 
+            new_length = len(input_ids[0])
+            passed_length = new_length - old_length
+            old_input_ids = input_ids 
+            old_length = new_length
+            #print(f"Passed length: {passed_length}")
+            length += passed_length
+              
+        while not verified_text_future.done():
+            pass
         # 等待处理完成
-        print(f"final text: {verified_text}")
+        print(f"final text: {input_text}")
         self.add_request(request_id, "delete", " "+str(length))
         return verified_text, timestamps
 
+    def speculative_decoding_parallel_with_chunked(self, prompt, max_length=20, generate_step=4):
+        """使用 speculative decoding 生成文本"""
+        generate_step = self.args.gamma
+        max_length = self.args.max_tokens
 
+        timestamps = []
+        timestamps.append(time.time())
+        request_id = str(uuid.uuid4().hex)
+        # 模拟发送请求
+        length = 0
+        verified_text_future = self.add_async_request(request_id, "init", prompt)
+        input_text = prompt
+        input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
+        old_input_ids = input_ids
+        old_length = len(old_input_ids[0])
+        past_key_values = None
+        cur_mode = True
+
+        while length < max_length:
+            draft_ids = input_ids.new_empty((0,))
+            draft_outputs = ""
+
+            while not verified_text_future.done(): 
+                with torch.no_grad():
+                    Mq = self.model(
+                        input_ids=input_ids,
+                        past_key_values=past_key_values,
+                        use_cache=self.use_cache,
+                    )
+                past_key_values = Mq.past_key_values
+                draft_logits = Mq.logits[..., -1, :]
+                xi = torch.argmax(draft_logits, dim=-1).unsqueeze(-1)
+                if self.use_cache:
+                    input_ids = xi.to(self.device)
+                else:
+                    input_ids = torch.cat((input_ids, xi), dim=1).to(self.device)
+                
+                draft_ids = torch.cat((draft_ids, xi), dim=1).to(self.device)
+                draft_outputs += self.tokenizer.decode(xi[0], skip_special_tokens=True)
+                timestamps.append(time.time()) 
+
+            verified_text = verified_text_future.result().verified_text
+            verified_ids = self.tokenizer.encode(verified_text, return_tensors='pt').to(self.device)
+            if cur_mode:
+                #print(f"verified text: {verified_text}")
+                #print(f"Draft output: {draft_outputs}")
+                if verified_ids[0][-1] == draft_ids[0][0]:
+                    print(f"cur_mode")
+                    cur_mode = False
+                    input_ids = input_ids.to(self.device)
+                    draft_outputs = self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)
+                    print(f"Draft output: {draft_outputs}")
+                    self.add_request(request_id, "update", draft_outputs) 
+                    verified_text_future = self.add_async_request(request_id, "verify", str(len(draft_ids[0])-1))
+                else:
+                    print(f"cur_mode conitnue")
+                    input_text = verified_text
+                    input_ids = verified_ids
+                    verified_text_future = self.add_async_request(request_id, "init", verified_text)
+            else:
+                #print(f"verified text: {verified_text}")
+                #print(f"Draft output: {draft_outputs}")
+                #print(f"input_text: {input_text}")
+                print(f"verified_text: {verified_ids[0][-5:]}, old_: {old_input_ids[0][-5:]}")
+                if verified_ids[0][-1]  == draft_ids[0][0]:
+                    print(f"not cur_mode")
+                    input_ids = torch.cat((verified_ids, draft_ids[:,1:]), dim=1).to(self.device)
+                    self.add_request(request_id, "update", self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)) 
+                    verified_text_future = self.add_async_request(request_id, "verify", str(len(draft_ids[0])-1))
+                else:
+                    print(f"not cur_mode failue")
+                    input_ids = verified_ids
+                    cur_mode = True
+                    verified_text_future = self.add_async_request(request_id, "init", verified_text)
+            
+            input_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+            print(f"Next forward input_ids: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
+            # input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
+            timestamps.append(time.time())
+
+            new_length = len(input_ids[0])
+            passed_length = new_length - old_length
+            old_input_ids = input_ids 
+            old_length = new_length
+            #print(f"Passed length: {passed_length}")
+            length += passed_length
+              
+        while not verified_text_future.done():
+            pass
+        # 等待处理完成
+        print(f"final text: {input_text}")
+        self.add_request(request_id, "delete", " "+str(length))
+        return verified_text, timestamps
 
 # 示例使用
 if __name__ == "__main__":
     # 初始化客户端
     args = parse_arguments()
     client = BatchClient(args)
-    ans, timestamps = client.speculative_decoding_parallel("The quick brown fox jumps over the lazy dog.")
+    ans, timestamps = client.speculative_decoding_parallel_with_chunked("The quick brown fox jumps over the lazy dog.")
     print(f"timestamps: {timestamps}")
