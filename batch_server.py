@@ -303,7 +303,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                         time.sleep(0.1)
 
             if task:
-                print(f"task: {task}")
+                # print(f"task: {task}")
                 text = task[2]
                 past_key_values = request_past_key_values.get(req_id, None)
                 past_sequence_length = past_key_values[0][0].shape[2] if past_key_values else 0
@@ -311,7 +311,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                 total_input_ids = self.tokenizer.encode(text, return_tensors="pt").to(self.device)
                 input_ids = total_input_ids if past_key_values is None else total_input_ids[:, past_sequence_length:]
                 
-                print(f"input_ids: {input_ids}, input_length: {input_ids.shape}, past_sequence_length: {past_sequence_length}")
+                # print(f"input_ids: {input_ids}, input_length: {input_ids.shape}, past_sequence_length: {past_sequence_length}")
                 # input_ids = inputs.input_ids.to(self.device)
                 # attention_mask = inputs.attention_mask.to(self.device)
 
