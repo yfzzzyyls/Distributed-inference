@@ -187,6 +187,7 @@ class BatchClient:
                 draft_ids = torch.cat((draft_ids, xi), dim=1).to(self.device)
                 draft_outputs += self.tokenizer.decode(xi[0], skip_special_tokens=True)
                 timestamps.append(time.time()) 
+                time.sleep(0.1)
 
             verified_text = verified_text_future.result().verified_text
             verified_ids = self.tokenizer.encode(verified_text, return_tensors='pt').to(self.device)
@@ -323,7 +324,7 @@ class BatchClient:
                     verified_text_future = self.add_async_request(request_id, "init", verified_text)
             
             input_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-            print(f"Next forward input_ids: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
+            # print(f"Next forward input_ids: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
             # input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
             timestamps.append(time.time())
 

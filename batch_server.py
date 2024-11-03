@@ -102,6 +102,7 @@ class VerficationServer(batch_pb2_grpc.BatchServiceServicer):
                 if request.request_id in request_text:
                     del request_text[request.request_id]
                     del request_past_key_values[request.request_id]
+                    torch.cuda.empty_cache()
                     print(f"Deleted request {request.request_id}.")
                     return batch_pb2.ResultResponse(
                         request_id=request.request_id,

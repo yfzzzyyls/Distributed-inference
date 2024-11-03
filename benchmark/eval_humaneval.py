@@ -129,7 +129,7 @@ class EvalHumaneval(BatchClient):
         out_f = open(out_path, "a")
         wall_times = {"time":[], "num_tokens":[]}
 
-        for datum in tqdm.tqdm(self.data, total=len(self.data), ncols=50):
+        for datum in tqdm.tqdm(self.data[10:20], total=len(self.data), ncols=50):
             input_text = datum["input_text"]
             #input_ids = datum["input_ids"]
             start_time = time.time()
