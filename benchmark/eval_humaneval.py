@@ -138,7 +138,7 @@ class EvalHumaneval(BatchClient):
             end_time = time.time()
             if datum["task_id"] != "HumanEval/0":
                 # skip the first prompt time consumption
-                wall_times["time"].append(end_time-start_time)
+                wall_times["time"].append(timestamps[-1]-timestamps[0])
                 wall_times["num_tokens"].append(self.args.max_tokens)
             output = generate_ids
             out_f.write(json.dumps({"task_id": datum["task_id"], "time": end_time-start_time, "new_tokens":  self.args.max_tokens, "completion": output}, ensure_ascii=False) + "\n")
