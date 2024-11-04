@@ -289,18 +289,18 @@ class BatchClient:
                 #print(f"verified text: {verified_text}")
                 #print(f"Draft output: {draft_outputs}")
                 if verified_ids[0][-1] == draft_ids[0][0]:
-                    print(f"cur_mode")
+                    #print(f"cur_mode")
                     cur_mode = False
                     input_ids = input_ids.to(self.device)
                     draft_outputs = self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)
-                    print(f"Draft output: {draft_outputs}")
+                    #print(f"Draft output: {draft_outputs}")
                     if len(draft_ids[0]) > 1:
                         self.add_request(request_id, "update", self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)) 
                         verified_text_future = self.add_async_request(request_id, "verify", str(len(draft_ids[0])-1))
                     else:
                         verified_text_future = self.add_async_request(request_id, "init", verified_text)
                 else:
-                    print(f"cur_mode conitnue")
+                    #print(f"cur_mode conitnue")
                     input_text = verified_text
                     input_ids = verified_ids
                     verified_text_future = self.add_async_request(request_id, "init", verified_text)
@@ -308,9 +308,9 @@ class BatchClient:
                 #print(f"verified text: {verified_text}")
                 #print(f"Draft output: {draft_outputs}")
                 #print(f"input_text: {input_text}")
-                print(f"verified_text: {verified_ids[0][-5:]}, old_: {old_input_ids[0][-5:]}")
+                #print(f"verified_text: {verified_ids[0][-5:]}, old_: {old_input_ids[0][-5:]}")
                 if verified_ids[0][-1]  == draft_ids[0][0]:
-                    print(f"not cur_mode")
+                    #print(f"not cur_mode")
                     input_ids = torch.cat((verified_ids, draft_ids[:,1:]), dim=1).to(self.device)
                     if len(draft_ids[0]) > 1:
                         self.add_request(request_id, "update", self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True)) 
@@ -318,7 +318,7 @@ class BatchClient:
                     else:
                         verified_text_future = self.add_async_request(request_id, "init", verified_text)
                 else:
-                    print(f"not cur_mode failue")
+                    #print(f"not cur_mode failue")
                     input_ids = verified_ids
                     cur_mode = True
                     verified_text_future = self.add_async_request(request_id, "init", verified_text)

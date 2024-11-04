@@ -36,8 +36,9 @@ class EvalHumaneval(BatchClient):
 
         # 统计文件的总行数
         file_path = os.path.join(self.args.data_path, "humaneval.jsonl")
-        with open(file_path, 'r') as f:
-            total_lines = sum(1 for _ in f)
+        # with open(file_path, 'r') as f:
+        #     total_lines = sum(1 for _ in f)
+        total_lines = 100
 
         # 计算每个进程应读取的行范围
         lines_per_process = total_lines // num_processes
@@ -129,7 +130,7 @@ class EvalHumaneval(BatchClient):
         out_f = open(out_path, "a")
         wall_times = {"time":[], "num_tokens":[]}
 
-        for datum in tqdm.tqdm(self.data[10:20], total=len(self.data), ncols=50):
+        for datum in tqdm.tqdm(self.data, total=len(self.data), ncols=50):
             input_text = datum["input_text"]
             #input_ids = datum["input_ids"]
             start_time = time.time()
@@ -144,6 +145,7 @@ class EvalHumaneval(BatchClient):
             out_f.flush()
         
         out_f.close()
+        print(f"Finish evaluating..., parallel decode time: {sum(wall_times['time'])}")
 
 if __name__ == "__main__":
     args = parse_arguments()
