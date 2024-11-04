@@ -262,10 +262,12 @@ class BatchClient:
         cur_mode = True
 
         while length < max_length:
+            print(f"Current length: {length}")
             draft_ids = input_ids.new_empty((0,))
             draft_outputs = ""
+            draft_num = 0
 
-            while not verified_text_future.done(): 
+            while not verified_text_future.done() and draft_num < generate_step: 
                 with torch.no_grad():
                     Mq = self.model(
                         input_ids=input_ids,
@@ -283,6 +285,7 @@ class BatchClient:
                 draft_ids = torch.cat((draft_ids, xi), dim=1).to(self.device)
                 draft_outputs += self.tokenizer.decode(xi[0], skip_special_tokens=True)
                 timestamps.append(time.time()) 
+                draft_num += 1
                 if self.tokenizer.eos_token_id == xi[0][0]:
                     break
             
@@ -330,9 +333,9 @@ class BatchClient:
             # print(f"Next forward input_ids: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
             # input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
             timestamps.append(time.time())
-            new_length = len(input_ids[0])
+            new_length = len(verified_ids[0])
             passed_length = new_length - old_length
-            old_input_ids = input_ids 
+            # old_input_ids = input_ids 
             old_length = new_length
             #print(f"Passed length: {passed_length}")
             length += passed_length
