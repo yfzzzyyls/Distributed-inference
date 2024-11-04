@@ -339,7 +339,7 @@ class BatchClient:
             old_length = new_length
             #print(f"Passed length: {passed_length}")
             length += passed_length
-            if self.tokenizer.eos_token_id == xi[0][0]:
+            if passed_length == 0:
                 break
               
         while not verified_text_future.done():
