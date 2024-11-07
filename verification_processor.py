@@ -13,10 +13,7 @@ class VerificationProcessor:
         self.args = args
         
         # Load model and tokenizer to the assigned device
-        self.model = AutoModelForCausalLM.from_pretrained(args.target_model).to(self.accelerator.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(args.target_model)
-        self.device = self.accelerator.device
-
+        self.load_model()
         # Connect to Redis
         self.redis = redis.Redis(host="localhost", port=6379, db=0)
 
@@ -26,6 +23,19 @@ class VerificationProcessor:
 
         # Initialize cache for past_key_values by request ID
         self.past_key_values_cache = {}
+    
+    def load_model(self):
+        self.model = AutoModelForCausalLM.from_pretrained(self.args.target_model, device_map="auto", torch_dtype=torch.float16)  # 替换成实际的模型路径
+        self.tokenizer = AutoTokenizer.from_pretrained(self.args.target_model)
+        self.device = self.model.device
+
+        if self.tokenizer.pad_token is None:
+            if self.tokenizer.eos_token:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+                self.model.resize_token_embeddings(len(self.tokenizer))
+        self.tokenizer.padding_side = "left"
 
     def encode_input(self, text=None, last_token_ids=None):
         print(text, last_token_ids)
@@ -57,13 +67,23 @@ class VerificationProcessor:
         next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(0)
         generate_finished = False if next_token_id[0].item() != self.tokenizer.eos_token_id else True
 
+        next_text = ""
+        if next_token_id in self.tokenizer.all_special_ids:
+            if next_token_id == self.tokenizer.eos_token_id:
+                generate_finished = True
+            else:
+                next_text = self.tokenizer.decode(next_token_id)
+                print(f"next special token: {next_text}")
+        else:
+            next_text = self.tokenizer.decode(next_token_id, skip_special_tokens=True)
+            if next_text == "":
+                next_text = self.tokenizer.decode(next_token_id)
+                print(f"empty next text: {next_token_id}, {next_text}")
+
         # Cache the past_key_values
         self.past_key_values_cache[req_id] = (Mp.past_key_values, next_token_id.unsqueeze(0))
-
         # output = torch.cat((input_ids[0], next_token_id), dim=0)
-        verified_text = self.tokenizer.decode(next_token_id, skip_special_tokens=True)
-        
-        return {"request_id": req_id, "next_text": verified_text, "generate_finished": generate_finished}
+        return {"request_id": req_id, "next_text": next_text, "generate_finished": generate_finished}
 
     def process_verify(self, request):
         """Verify continuation of text using cached past_key_values."""
@@ -112,7 +132,19 @@ class VerificationProcessor:
         else:
             self.past_key_values_cache.pop(req_id)
         print(f"deal with past_key_values shape: {rollbacked_past_key_values[0][0].shape}")
-        next_text = self.tokenizer.decode(verified_ids[-1], skip_special_tokens=True)
+        next_text = ""
+        if verified_ids[-1] in self.tokenizer.all_special_ids:
+            if verified_ids[-1] == self.tokenizer.eos_token_id:
+                generate_finished = True
+            else:
+                next_text = self.tokenizer.decode(verified_ids[-1])
+                print(f"next special token: {next_text}")
+        else:
+            next_text = self.tokenizer.decode(verified_ids[-1], skip_special_tokens=True)
+
+            if next_text == "":
+                next_text = self.tokenizer.decode(verified_ids[-1])
+                print(f"empty next text: {verified_ids[-1]}, {next_text}")
 
         return {"request_id": req_id, "next_text": next_text, "passed_tokens": n, "correct_rate": n / generate_step, "generate_finished": generate_finished}
 

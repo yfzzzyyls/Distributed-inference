@@ -11,11 +11,11 @@ import random
 import concurrent.futures
 import numpy as np
 from collections import Counter
-from batch_client import BatchClient
+from multi_draft_client import DraftClient
 import argparse
 
 
-class EvalHumaneval(BatchClient):
+class EvalHumaneval(DraftClient):
     def __init__(self, args):
         super().__init__(args)
         self.client_num = self.accelerator.num_processes
@@ -38,7 +38,7 @@ class EvalHumaneval(BatchClient):
         file_path = os.path.join(self.args.data_path, "humaneval.jsonl")
         # with open(file_path, 'r') as f:
         #     total_lines = sum(1 for _ in f)
-        total_lines = 100
+        total_lines = 20
 
         # 计算每个进程应读取的行范围
         lines_per_process = total_lines // num_processes
@@ -90,7 +90,7 @@ class EvalHumaneval(BatchClient):
             input_text = datum["input_text"]
             #input_ids = datum["input_ids"]
             start_time = time.time()
-            generate_ids, timestamps = self.speculative_decoding(input_text)
+            generate_ids, timestamps = self.speculative_decoding_parallel_with_chunked(input_text)
             end_time = time.time()
             if datum["task_id"] != "HumanEval/0":
                 # skip the first prompt time consumption

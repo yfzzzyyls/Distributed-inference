@@ -8,7 +8,7 @@ def parse_arguments():
     parser.add_argument('--data_path', type=str, default="./data")
 
     parser.add_argument('--draft_model', type=str, default="/home/apc/llama/Qwen2.5-0.5B-Instruct")
-    parser.add_argument('--target_model', type=str, default="/home/apc/llama/Llama-3.2-1B-Instruct")
+    parser.add_argument('--target_model', type=str, default="/home/apc/llama/Qwen2.5-3B-Instruct")
     
     parser.add_argument('--host', type=str, default="localhost")
     parser.add_argument('--port', type=str, default="50051")

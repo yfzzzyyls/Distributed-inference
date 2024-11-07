@@ -344,7 +344,14 @@ class DraftClient:
             if verification_service_response.generate_finished:
                 generate_finished = True
                 print(f"generate finished")
-                break
+
+                if cur_mode:
+                    break
+                else:
+                    passed_token_num = next_text_future.result().passed_tokens
+                    result_ids[0][current_length:current_length+passed_token_num] = draft_ids[0][:passed_token_num]
+                    break
+                
             next_text = verification_service_response.next_text
             next_ids = self.tokenizer.encode(next_text, return_tensors='pt').to(self.device)
             print(f"Next text: {next_text}")
@@ -370,7 +377,7 @@ class DraftClient:
                         draft_ids = draft_ids[:,1:]
                         draft_num -= 1
                         # self.add_request(request_id, "update", self.tokenizer.decode(draft_ids[0][1:], skip_special_tokens=True))
-                        draft_text = self.tokenizer.decode(draft_ids[0], skip_special_tokens=True) 
+                        draft_text = self.tokenizer.decode(draft_ids[0]) 
                         print(f"verify draft: {draft_text}")
                         next_text_future = self.add_async_request(request_id, "verify", draft_text)
                     else:
@@ -382,7 +389,6 @@ class DraftClient:
                 else:
                     print(f"stay init")
                     #print(f"cur_mode conitnue")
-                    input_text = next_text
                     input_ids = next_ids
                     draft_ids = torch.empty((1, 0), dtype=torch.long).to(self.device)
                     past_key_values = rollback_past_key_values(past_key_values, draft_num)
@@ -414,7 +420,7 @@ class DraftClient:
                             input_ids = draft_ids[:, -1:]
                             draft_ids = draft_ids[:,passed_token_num+1:]
                             draft_num -= (passed_token_num + 1)
-                            draft_text = self.tokenizer.decode(draft_ids[0], skip_special_tokens=True) 
+                            draft_text = self.tokenizer.decode(draft_ids[0]) 
                             print(f"verify draft: {draft_text}")
                             next_text_future = self.add_async_request(request_id, "verify", draft_text)
                         else:
