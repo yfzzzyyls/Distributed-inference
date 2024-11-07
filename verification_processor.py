@@ -19,7 +19,7 @@ class VerificationProcessor:
 
         # Set queue names based on process ID
         self.process_id = self.accelerator.process_index
-        self.task_queue = f"task_queue_{self.process_id}"
+        self.task_queue = f"task_queue_1"
 
         # Initialize cache for past_key_values by request ID
         self.past_key_values_cache = {}

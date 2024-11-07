@@ -18,7 +18,7 @@ class RandomSchedulingStrategy(SchedulingStrategy):
     """随机选择队列的调度策略."""
     def __init__(self):
         self.queue_metrics = {}  # 用于存储每个队列的处理时间和正确率
-
+        
     def update_metrics(self, queue_name, processing_time, correct_rate=0):
         """更新队列的处理时间和正确率."""
         if queue_name not in self.queue_metrics:
@@ -108,10 +108,13 @@ class VerificationService(service_pb2_grpc.BatchServiceServicer):
     def __init__(self, task_manager):
         self.task_manager = task_manager
         self.redis = redis.Redis(host='localhost', port=6379, db=0)  # 连接 Redis
+        self.queue_of_task = {}
 
     def VerifyRequest(self, request, context):
         # 使用 TaskManager 选择合适的队列
-        queue_name = self.task_manager.select_queue()
+        if request.request_id not in self.queue_of_task:
+            self.queue_of_task[request.request_id] = self.task_manager.select_queue()
+        queue_name = self.queue_of_task.get(request.request_id)
 
         # 将任务数据序列化为 JSON 并推送到 Redis 队列
         task_data = {
@@ -152,8 +155,9 @@ class VerificationService(service_pb2_grpc.BatchServiceServicer):
 
     def InitRequest(self, request, context):
         # 使用 TaskManager 选择合适的队列
-        queue_name = self.task_manager.select_queue()
-
+        if request.request_id not in self.queue_of_task:
+            self.queue_of_task[request.request_id] = self.task_manager.select_queue()
+        queue_name = self.queue_of_task.get(request.request_id)
         # 将任务数据序列化为 JSON 并推送到 Redis 队列
         task_data = {
             "request_id": request.request_id,
@@ -192,7 +196,9 @@ class VerificationService(service_pb2_grpc.BatchServiceServicer):
 
     def DeleteRequest(self, request, context):
         # 使用 TaskManager 选择合适的队列
-        queue_name = self.task_manager.select_queue()
+        if request.request_id not in self.queue_of_task:
+            self.queue_of_task[request.request_id] = self.task_manager.select_queue()
+        queue_name = self.queue_of_task.get(request.request_id)
 
         # 将任务数据序列化为 JSON 并推送到 Redis 队列
         task_data = {
@@ -210,6 +216,7 @@ class VerificationService(service_pb2_grpc.BatchServiceServicer):
             if result:
                 # 解析处理完成的结果
                 deleted_data = json.loads(result[1])
+                self.queue_of_task.pop(request.request_id, None)
                 status = deleted_data.get("status", "success")
                 if status == "error":
                     raise ValueError(deleted_data.get("message", deleted_data.message))
@@ -227,7 +234,7 @@ class VerificationService(service_pb2_grpc.BatchServiceServicer):
 
 def serve():
     # 可用的 Verification Server 队列列表
-    available_queues = ["task_queue_0"]
+    available_queues = ["task_queue_0", "task_queue_1"]
     
     # 选择调度策略
     strategy = RandomSchedulingStrategy()  # 或者使用 RandomSchedulingStrategy()
