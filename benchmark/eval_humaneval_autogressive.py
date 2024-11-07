@@ -90,7 +90,7 @@ class VerficationServer():
             generated_tokens = []
             for _ in range(self.args.max_tokens):
                 with torch.no_grad():
-                    output = self.model(input_ids=input_ids, past_key_values=past_key_values, use_cache=True)
+                    output = self.model(input_ids=input_ids[: ,-1:], past_key_values=past_key_values, use_cache=True)
                 logits = output.logits
                 past_key_values = output.past_key_values
 
@@ -102,7 +102,7 @@ class VerficationServer():
                 generated_tokens.append(next_token_id.item())
 
                 # Update input_ids for the next iteration
-                input_ids = next_token_id  # Shape: [batch_size, 1]
+                input_ids = torch.cat((input_ids, next_token_id), dim=-1)  # Shape: [batch_size, 1]
 
                 # Check for end-of-sequence token
                 if next_token_id.item() == self.tokenizer.eos_token_id:

@@ -289,7 +289,7 @@ class DraftClient:
     def speculative_decoding_parallel_with_chunked(self, prompt, max_length=20, generate_step=4):
         """使用 speculative decoding 生成文本"""
         generate_step = self.args.gamma
-        max_length = 200
+        max_length = self.args.max_tokens
         timestamps = []
         timestamps.append(time.time())
         request_id = str(uuid.uuid4().hex)
@@ -351,7 +351,7 @@ class DraftClient:
                     passed_token_num = next_text_future.result().passed_tokens
                     result_ids[0][current_length:current_length+passed_token_num] = draft_ids[0][:passed_token_num]
                     break
-                
+
             next_text = verification_service_response.next_text
             next_ids = self.tokenizer.encode(next_text, return_tensors='pt').to(self.device)
             print(f"Next text: {next_text}")
