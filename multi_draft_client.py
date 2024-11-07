@@ -396,9 +396,11 @@ class DraftClient:
                     next_text_future = self.add_async_request(request_id, "init", None)
             else:
                 passed_token_num = next_text_future.result().passed_tokens
-                result_ids[0][current_length:current_length+passed_token_num] = draft_ids[0][:passed_token_num]
                 if current_length+passed_token_num < max_length:
+                    result_ids[0][current_length:current_length+passed_token_num] = draft_ids[0][:passed_token_num]
                     result_ids[0][current_length+passed_token_num] = next_ids[0][0]
+                else:
+                    result_ids[0][current_length:] = draft_ids[0][:max_length-current_length]
                 current_length += passed_token_num + 1
                 print(f"Verification retured passed token number: {passed_token_num}, draft_ids shape: {draft_ids.shape}")
                 #print(f"verified text: {verified_text}")
