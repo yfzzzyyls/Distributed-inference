@@ -8,7 +8,7 @@ def parse_arguments():
     parser.add_argument('--data_path', type=str, default="./data")
 
     parser.add_argument('--draft_model', type=str, default="/home/apc/llama/Qwen2.5-0.5B-Instruct")
-    parser.add_argument('--target_model', type=str, default="/home/apc/llama/Llama-3.2-3B-Instruct")
+    parser.add_argument('--target_model', type=str, default="/home/apc/llama/Llama-3.2-1B-Instruct")
     
     parser.add_argument('--host', type=str, default="localhost")
     parser.add_argument('--port', type=str, default="50051")
@@ -27,3 +27,10 @@ def parse_arguments():
     args.exp_name = os.path.join(os.getcwd(), "exp", args.exp_name)
     os.makedirs(args.exp_name, exist_ok=True)
     return args
+
+def rollback_past_key_values(past_key_values, n):
+    """Rollback past_key_values to n steps."""
+    if n != 0:
+        return [(layer[0][:, :, :-n, :], layer[1][:, :, :-n, :]) for layer in past_key_values]
+    else:
+        return past_key_values

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package protos;
+
+// Messages for the VerifyRequest service
+message VerifyRequest {
+    string request_id = 1;
+    string request_type = 2;
+    string text = 3;
+}
+
+message VerifyResultResponse {
+    string request_id = 1;
+    string next_text = 2;
+    int32 passed_tokens = 3;
+    bool generate_finished = 4;
+}
+
+// Messages for the InitRequest service
+message InitRequest {
+    string request_id = 1;
+    string request_type = 2;
+    optional string text = 3;
+}
+
+message InitRequestResponse {
+    string request_id = 1;
+    string next_text = 2;
+    bool generate_finished = 3;
+}
+
+message DeleteRequest {
+    string request_id = 1;
+    string request_type = 2;
+}
+
+message DeleteRequestResponse {
+    string request_id = 1;
+}
+
+// Define the BatchService service with fully qualified message names
+service BatchService {
+    rpc VerifyRequest (protos.VerifyRequest) returns (protos.VerifyResultResponse);
+    rpc InitRequest (protos.InitRequest) returns (protos.InitRequestResponse);
+    rpc DeleteRequest (protos.InitRequest) returns (protos.DeleteRequestResponse);
+}
