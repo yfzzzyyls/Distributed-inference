@@ -2,6 +2,15 @@
 
 This repository has been adapted for **single-device** AWS Trainium usage with **speculative decoding** by default, using **Meta LLaMA 3.2** (1B draft + 3B target) in **bfloat16**. We assume you have an **AWS DLAMI** with Neuron SDK installed.
 
+## Dpendencies
+
+install dependencies
+
+```
+pip install grpcio==1.71.0 grpcio-tools==1.66.2
+pip install gevent
+```
+
 ## Setup
 
 1. **Clone Repo & Install**:
