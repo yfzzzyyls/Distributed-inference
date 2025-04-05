@@ -11,12 +11,32 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from protos import model_service_pb2, model_service_pb2_grpc
 
 class LlamaKVWrapper(torch.nn.Module):
-    def __init__(self, base_model):
+    def __init__(self, base_model, num_layers):
         super().__init__()
         self.base_model = base_model
+        self.num_layers = num_layers
 
     def forward(self, input_ids, past_key_values=None):
-        # explicitly call the base model with named "past_key_values"
+        """
+        Re-chunk a flattened 'past_key_values' into the expected
+        tuple((k1,v1), (k2,v2), ...) so LLaMA's code can do:
+            key_states, value_states = past_key_values[layer_idx]
+        """
+        if past_key_values is not None:
+            # We expect 2 * num_layers items in the flattened tuple
+            if len(past_key_values) == 2 * self.num_layers:
+                chunked = []
+                for i in range(0, len(past_key_values), 2):
+                    k = past_key_values[i]
+                    v = past_key_values[i + 1]
+                    chunked.append((k, v))
+                past_key_values = tuple(chunked)
+            else:
+                raise ValueError(
+                    f"Got {len(past_key_values)} items in 'past_key_values', "
+                    f"but expected {2 * self.num_layers} for {self.num_layers} layers."
+                )
+
         outputs = self.base_model(
             input_ids=input_ids,
             past_key_values=past_key_values,
@@ -60,19 +80,32 @@ class ModelServiceClient:
                 print("[Draft] Compiling draft model with torch_neuronx.trace…")
                 seq_len = 1
                 past_seq = max_length - 1
+
                 num_layers = base_model.config.num_hidden_layers
-                num_heads = base_model.config.num_attention_heads
-                head_dim = base_model.config.hidden_size // num_heads
+                # Use num_key_value_heads for K/V dimension count
+                num_kv = getattr(base_model.config, "num_key_value_heads", base_model.config.num_attention_heads)
+                # IMPORTANT: use `head_dim` from the config directly
+                head_dim = base_model.config.head_dim
+                batch_size = 1
 
-                dummy_past = []
+                dummy_past_pairs = []
                 for _ in range(num_layers):
-                    k = torch.zeros(1, num_heads, past_seq, head_dim, dtype=torch.bfloat16)
-                    v = torch.zeros(1, num_heads, past_seq, head_dim, dtype=torch.bfloat16)
-                    dummy_past.append((k,v))
-                dummy_past = tuple(x for pair in dummy_past for x in pair)
-                dummy_input_ids = torch.zeros((1, seq_len), dtype=torch.long)
+                    k = torch.zeros((batch_size, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
+                    v = torch.zeros((batch_size, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
+                    dummy_past_pairs.append((k, v))
 
-                self.model = torch_neuronx.trace(base_model, (dummy_input_ids, dummy_past))
+                # Flatten each layer's (k, v) into a single tuple for legacy cache
+                flattened = []
+                for (k, v) in dummy_past_pairs:
+                    flattened.append(k)
+                    flattened.append(v)
+                dummy_past = tuple(flattened)
+
+                dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
+
+                wrapper = LlamaKVWrapper(base_model, num_layers)
+                self.model = torch_neuronx.trace(wrapper, (dummy_input_ids, dummy_past))
+
                 if compiled_model_path:
                     print(f"[Draft] Saving compiled model to {compiled_model_path}")
                     self.model.save(compiled_model_path)
