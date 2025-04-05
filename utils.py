@@ -1,36 +1,50 @@
+# utils.py
 import argparse
 import os
 
-def parse_arguments():
-    """Specified arguments for running scripts."""
-    parser = argparse.ArgumentParser(description='args for this file')
+def get_args():
+    parser = argparse.ArgumentParser(description="Distributed inference on AWS Trainium")
+
+    # Common arguments for draft & target
+    parser.add_argument("--host", type=str, default="localhost", help="Server hostname/IP for gRPC")
+    parser.add_argument("--port", type=str, default="50051", help="Server port for gRPC")
     
-    parser.add_argument('--data_path', type=str, default="./data")
-
-    parser.add_argument('--draft_model', type=str, default="/home/apc/llama/Qwen2.5-0.5B-Instruct")
-    parser.add_argument('--target_model', type=str, default="/home/apc/llama/Qwen2.5-3B-Instruct")
+    # Draft model arguments
+    parser.add_argument("--draft_model", type=str, default="/home/ubuntu/models/llama-3.2-1b",
+                        help="Path/ID for the LLaMA 3.2 1B draft model (HF format)")
+    parser.add_argument("--compiled_draft_model", type=str, default=None,
+                        help="Path to a precompiled draft model TorchScript (if available)")
     
-    parser.add_argument('--host', type=str, default="localhost")
-    parser.add_argument('--port', type=str, default="50051")
-    parser.add_argument('--use_cache', type=bool, default=True)
+    # Target model arguments
+    parser.add_argument("--target_model", type=str, default="/home/ubuntu/models/llama-3.2-3b",
+                        help="Path/ID for the LLaMA 3.2 3B target model (HF format)")
+    parser.add_argument("--compiled_target_model", type=str, default=None,
+                        help="Path to a precompiled target model TorchScript (if available)")
 
-    parser.add_argument('--exp_name', '-e', type=str, default="./exp", help='folder name for storing results.')
-    parser.add_argument('--eval_mode', type=str, default="small", choices=["small", "large", "sd", "para_sd", "para_sd_wo_1", "para_sd_wo_2"], help='eval mode.')
-    parser.add_argument('--batch_size', '-n', type=int, default=2, help='num_samples for a task (prompt) in humaneval dataset.')
-    parser.add_argument('--seed', '-s', type=int, default=1234, help='set a random seed, which can makes the result reproducible')
-    parser.add_argument('--max_tokens', type=int, default=128, help='max token number generated.')
-    parser.add_argument('--temp', type=float, default=0.2, help='temperature for generating new tokens.')
-    parser.add_argument('--top_k', type=int, default=0, help='top_k for ungreedy sampling strategy.')
-    parser.add_argument('--top_p', type=float, default=0.95, help='top_p for ungreedy sampling strategy.')
-    parser.add_argument('--gamma', type=int, default=4, help='guess time.')
-    args = parser.parse_args()
-    args.exp_name = os.path.join(os.getcwd(), "exp", args.exp_name)
-    os.makedirs(args.exp_name, exist_ok=True)
-    return args
+    # Speculative decoding parameters
+    parser.add_argument("--use_cache", action="store_true", default=True,
+                        help="Use KV cache for incremental decoding (enabled by default).")
+    parser.add_argument("--gamma", type=int, default=4,
+                        help="Number of tokens to generate speculatively at once (draft model).")
+    parser.add_argument("--max_length", type=int, default=128,
+                        help="Max tokens to generate in total for the prompt.")
+    
+    # Neuron compile flags
+    parser.add_argument("--compile", action="store_true",
+                        help="If set, compile the model on-the-fly with torch_neuronx.trace")
+    parser.add_argument("--max_context", type=int, default=2048,
+                        help="Max context length for compilation (KV cache).")
 
-def rollback_past_key_values(past_key_values, n):
-    """Rollback past_key_values to n steps."""
-    if n != 0:
-        return [(layer[0][:, :, :-n, :], layer[1][:, :, :-n, :]) for layer in past_key_values]
-    else:
-        return past_key_values
+    # Additional flags for server or client
+    parser.add_argument("--server", action="store_true",
+                        help="If set, we run the target model server (model_service.py).")
+    parser.add_argument("--draft", action="store_true",
+                        help="If set, we run the draft client (draft_client.py).")
+    parser.add_argument("--quantize", action="store_true",
+                        help="(Not used) For int4 or int8 quant; ignoring for Neuron BF16.")
+    
+    # Evaluate / test
+    parser.add_argument("--prompt", type=str, default="Once upon a time,",
+                        help="Prompt to use if we test or evaluate.")
+    
+    return parser.parse_args()

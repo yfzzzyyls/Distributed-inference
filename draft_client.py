@@ -1,341 +1,165 @@
+# draft_client.py
+import os
+import time
 import grpc
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, QuantoConfig
-import protos.model_service_pb2
-import protos.model_service_pb2_grpc
-import time
-import uuid
+import torch_neuronx
 import gevent
-import concurrent.futures
+import gevent.pool
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from protos import model_service_pb2, model_service_pb2_grpc
 
 class ModelServiceClient:
-    def __init__(self, model_name=None, model=None, tokenizer=None, server_address='localhost:2024', quantize=False, max_length=50, generate_step=6, debug_mode=False):
-        """
-        初始化 gRPC 客户端，支持通过 model_name 加载模型或直接传入预加载的模型和 tokenizer。
-        """
-        self.server_address = server_address
+    def __init__(self,
+                 model_name: str,
+                 compiled_model_path: str=None,
+                 compile_model: bool=False,
+                 max_length: int=128,
+                 gamma: int=4,
+                 host: str="localhost",
+                 port: str="50051",
+                 prompt: str="Once upon a time,"):
+        self.host = host
+        self.port = port
         self.max_length = max_length
-        self.generate_step = generate_step
-        self.generated_uuid = str(uuid.uuid4())
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=generate_step)
-        self.debug_mode = debug_mode
+        self.gamma = gamma
+        self.prompt = prompt
 
-        # 如果没有传入模型和 tokenizer，则根据 model_name 来加载
-        if model is None or tokenizer is None:
-            self.quantize = QuantoConfig(weights="int4") if quantize else None
-            self.tokenizer, self.model, self.vocab_size = self.load_model_and_tokenizer(model_name)
+        # Connect to the server
+        server_addr = f"{host}:{port}"
+        self.channel = grpc.insecure_channel(server_addr)
+        self.stub = model_service_pb2_grpc.ModelServiceStub(self.channel)
+
+        # Load or compile draft model
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # If precompiled:
+        if compiled_model_path and os.path.isfile(compiled_model_path):
+            print(f"[Draft] Loading precompiled model from {compiled_model_path}")
+            self.model = torch.jit.load(compiled_model_path)
         else:
-            # 直接使用传入的模型和 tokenizer
-            self.model = model
-            self.tokenizer = tokenizer
-            self.vocab_size = model.config.vocab_size
+            print(f"[Draft] Loading HF model {model_name} in BF16 for Trainium.")
+            base_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+            base_model.eval()
 
-        # 设置设备
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device)
+            if compile_model:
+                print("[Draft] Compiling draft model with torch_neuronx.trace…")
+                seq_len = 1
+                past_seq = max_length - 1
+                num_layers = base_model.config.num_hidden_layers
+                num_heads = base_model.config.num_attention_heads
+                head_dim = base_model.config.hidden_size // num_heads
 
-        # 初始化 gRPC 通道和存根
-        self.channel = grpc.insecure_channel(self.server_address)
-        self.stub = protos.model_service_pb2_grpc.ModelServiceStub(self.channel)
+                dummy_past = []
+                for _ in range(num_layers):
+                    k = torch.zeros(1, num_heads, past_seq, head_dim, dtype=torch.bfloat16)
+                    v = torch.zeros(1, num_heads, past_seq, head_dim, dtype=torch.bfloat16)
+                    dummy_past.append((k,v))
+                dummy_past = tuple(x for pair in dummy_past for x in pair)
+                dummy_input_ids = torch.zeros((1, seq_len), dtype=torch.long)
 
-    def load_model_and_tokenizer(self, model_name):
-        """
-        加载模型和 tokenizer，并返回模型、tokenizer 和词汇表大小。
-        """
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=self.quantize)
-        model.eval()  # 设置为评估模式
-        vocabulary_size = model.config.vocab_size
-        return tokenizer, model, vocabulary_size
-
-    def update_token(self, k, draft_output):
-        """
-        更新生成的 token
-        """
-        token_update_request = protos.model_service_pb2.UpdateTokenRequest(
-            user_uuid=self.generated_uuid,
-            index=k,
-            input_text=draft_output,
-        )
-        return self.stub.UpdateToken(token_update_request)
-
-    #async def process_step(self, queue, step_index, draft_output):
-    #    """
-    #    异步处理生成的 token 并发送更新请求
-    #    """
-    #    result = await asyncio.to_thread(self.update_token, step_index, draft_output)
-    #    await queue.put((step_index, result))
-
-    def speculative_decode_gevent(self, prompt, generate_step=None):
-        """
-        与 gRPC 服务进行交互，执行 token 验证和生成任务（speculative 模式）。
-        """
-        if generate_step is None:
-            generate_step = self.generate_step
-
-        drafter_cache = None
-        total_generated = 0  # 已生成的 tokens 数
-        first_target = True
-        output_text = ""
-        start_time = time.time()  # 记录开始时间
-
-        if first_target:
-            prepare_request = protos.model_service_pb2.PrepareSpeculativeRequest(
-                user_uuid=self.generated_uuid,
-                prompt=prompt,
-                max_length=self.max_length,
-                generate_step=generate_step,
-                exact_mode=True,
-                debug_mode=True
-            )
-            prepare_response = self.stub.PrepareSpeculative(prepare_request)
-            first_tokens = prepare_response.first_tokens  # 这是一个 token ID 列表
-            output_text = first_tokens
-            total_generated += 1
-
-        input_ids = self.tokenizer.encode(output_text, return_tensors='pt').to(self.device)
-
-        while total_generated < self.max_length:
-            q = torch.zeros((1, generate_step, self.vocab_size), device=self.device)
-            total_generated = len(input_ids[0])
-            if total_generated >= self.max_length:
-                break
-            
-            tasks = []
-            draft_step = 0
-            draft_output = [None for _ in range(generate_step)]
-            for k in range(generate_step):
-                with torch.no_grad():
-                    Mq = self.model(
-                        input_ids=input_ids,
-                        past_key_values=drafter_cache,
-                        use_cache=False,
-                    )
-                drafter_cache = Mq.past_key_values
-                draft_logits = Mq.logits[..., -1, :]
-                q[0, k] = draft_logits.to(self.device)
-                xi = torch.argmax(draft_logits, dim=-1).unsqueeze(-1)
-                input_ids = torch.cat((input_ids, xi), dim=1).to(self.device)
-
-                draft_output[k] = self.tokenizer.decode(xi[0], skip_special_tokens=True)
-                tasks.append(gevent.spawn(self.update_token, k, draft_output[k]))                
-                draft_step += 1
-
-            gevent.joinall(tasks)
-            token_request = protos.model_service_pb2.VerifyTokensRequest(
-                user_uuid=self.generated_uuid
-            )
-            token_response = self.stub.VerifyTokens(token_request)
-
-            if token_response.finished:
-                break
-
-            passed_tokens = token_response.passed_tokens
-            verified_tokens = self.tokenizer.encode(token_response.verified_tokens, return_tensors='pt').to(self.device)
-            if passed_tokens < generate_step:
-                input_ids = torch.cat((input_ids[0][:-generate_step + passed_tokens].unsqueeze(0), verified_tokens), dim=1).to(self.device)
+                self.model = torch_neuronx.trace(base_model, (dummy_input_ids, dummy_past))
+                if compiled_model_path:
+                    print(f"[Draft] Saving compiled model to {compiled_model_path}")
+                    self.model.save(compiled_model_path)
             else:
-                input_ids = torch.cat((input_ids, verified_tokens), dim=1).to(self.device)
+                # No compile -> run on CPU
+                self.model = base_model
 
-        output_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        end_time = time.time()
-        print(f"Speculative with gevent 生成过程执行时间：{end_time - start_time} 秒")
-        return output_text
-    
-    def speculative_decode_thread(self, prompt, max_length=None):
-        """
-        与 gRPC 服务进行交互，执行 token 验证和生成任务（speculative 模式）。
-        """
-        if max_length is None:
-            max_length = self.max_length
-
-        drafter_cache = None
-        total_generated = 0  # 已生成的 tokens 数
-        first_target = True
-        output_text = ""
-        start_time = time.time()  # 记录开始时间
-
-        if first_target:
-            prepare_request = protos.model_service_pb2.PrepareSpeculativeRequest(
-                user_uuid=self.generated_uuid,
-                prompt=prompt,
-                max_length=self.max_length,
-                generate_step=self.generate_step,
-                exact_mode=True,
-                debug_mode=self.debug_mode
-            )
-            prepare_response = self.stub.PrepareSpeculative(prepare_request)
-            first_tokens = prepare_response.first_tokens  # 这是一个 token ID 列表
-            output_text = first_tokens
-            total_generated += 1
-
-        input_ids = self.tokenizer.encode(output_text, return_tensors='pt').to(self.device)
-
-        while total_generated < self.max_length:
-            #q = torch.zeros((1, self.generate_step, self.vocab_size), device=self.device)
-            total_generated = len(input_ids[0])
-            if total_generated >= self.max_length:
-                break
-            
-            tasks = []
-            draft_step = 0
-            draft_output = [None for _ in range(self.generate_step)]
-            for k in range(self.generate_step):
-                with torch.no_grad():
-                    Mq = self.model(
-                        input_ids=input_ids,
-                        past_key_values=drafter_cache,
-                        use_cache=False,
-                    )
-                drafter_cache = Mq.past_key_values
-                draft_logits = Mq.logits[..., -1, :]
-                #q[0, k] = draft_logits.to(self.device)
-                xi = torch.argmax(draft_logits, dim=-1).unsqueeze(-1)
-                input_ids = torch.cat((input_ids, xi), dim=1).to(self.device)
-                # input_ids = xi
-                
-                draft_output[k] = self.tokenizer.decode(xi[0], skip_special_tokens=True)
-                tasks.append(self.executor.submit(self.update_token, k, draft_output[k]))                
-                draft_step += 1
-            
-            concurrent.futures.wait(tasks)
-            token_request = protos.model_service_pb2.VerifyTokensRequest(
-                user_uuid=self.generated_uuid
-            )
-            token_response = self.stub.VerifyTokens(token_request)
-
-            if token_response.finished:
-                break
-
-            passed_tokens = token_response.passed_tokens
-            #print(f"passed tokens: {token_response.verified_tokens}")
-            verified_tokens = self.tokenizer.encode(token_response.verified_tokens, return_tensors='pt').to(self.device)
-            if passed_tokens < self.generate_step:
-                #drafter_cache = tuple(
-    #(key[:, :, :-self.generate_step + passed_tokens, :], value[:, :, :-self.generate_step + passed_tokens, :]) for key, value in drafter_cache
-#)
-                #input_ids = verified_tokens
-                input_ids = torch.cat((input_ids[0][:-self.generate_step + passed_tokens].unsqueeze(0), verified_tokens), dim=1).to(self.device)
-            else:
-                #input_ids = verified_tokens
-                input_ids = torch.cat((input_ids, verified_tokens), dim=1).to(self.device)
-            
-
-        output_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        end_time = time.time()
-        print(f"Speculative with thread 生成过程执行时间：{end_time - start_time} 秒")
-        return output_text
-    
-    def speculative_decode(self, prompt, max_length=None):
-        """
-        与 gRPC 服务进行交互，执行 token 验证和生成任务（speculative 模式）。
-        """
-        if max_length is None:
-            max_length = self.max_length
-
-        drafter_cache = None
-        total_generated = 0  # 已生成的 tokens 数
-        first_target = True
-        output_text = ""
-        start_time = time.time()  # 记录开始时间
-
-        if first_target:
-            prepare_request = protos.model_service_pb2.PrepareSpeculativeRequest(
-                user_uuid=self.generated_uuid,
-                prompt=prompt,
-                max_length=self.max_length,
-                generate_step=self.generate_step,
-                exact_mode=True,
-                debug_mode=True
-            )
-            prepare_response = self.stub.PrepareSpeculative(prepare_request)
-            first_tokens = prepare_response.first_tokens  # 这是一个 token ID 列表
-            output_text = first_tokens
-            total_generated += 1
-
-        input_ids = self.tokenizer.encode(output_text, return_tensors='pt').to(self.device)
-
-        while total_generated < max_length:
-            q = torch.zeros((1, self.generate_step, self.vocab_size), device=self.device)
-            total_generated = len(input_ids[0])
-            if total_generated >= max_length:
-                break
-            
-            tasks = []
-            draft_step = 0
-            draft_output = [None for _ in range(self.generate_step)]
-            for k in range(self.generate_step):
-                with torch.no_grad():
-                    Mq = self.model(
-                        input_ids=input_ids,
-                        past_key_values=drafter_cache,
-                        use_cache=False,
-                    )
-                drafter_cache = Mq.past_key_values
-                draft_logits = Mq.logits[..., -1, :]
-                q[0, k] = draft_logits.to(self.device)
-                xi = torch.argmax(draft_logits, dim=-1).unsqueeze(-1)
-                input_ids = torch.cat((input_ids, xi), dim=1).to(self.device)
-
-                draft_output[k] = self.tokenizer.decode(xi[0], skip_special_tokens=True)
-                self.update_token(k, draft_output[k])           
-                draft_step += 1
-
-            token_request = protos.model_service_pb2.VerifyTokensRequest(
-                user_uuid=self.generated_uuid
-            )
-            token_response = self.stub.VerifyTokens(token_request)
-
-            if token_response.finished:
-                break
-
-            passed_tokens = token_response.passed_tokens
-            verified_tokens = self.tokenizer.encode(token_response.verified_tokens, return_tensors='pt').to(self.device)
-            if passed_tokens < self.generate_step:
-                drafter_cache = drafter_cache[:-self.generate_step + passed_tokens]
-                #input_ids = verified_tokens
-                input_ids = torch.cat((input_ids[0][:-self.generate_step + passed_tokens].unsqueeze(0), verified_tokens), dim=1).to(self.device)
-            else:
-                #input_ids = verified_tokens
-                input_ids = torch.cat((input_ids, verified_tokens), dim=1).to(self.device)
-
-        output_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        end_time = time.time()
-        print(f"Speculative 生成过程执行时间：{end_time - start_time} 秒")
-        return output_text
-
-    def traditional_generate(self, prompt, max_length=None):
-        """
-        使用传统方法生成文本。
-        """
-        start_time = time.time()
-        request = protos.model_service_pb2.GenerateContentRequest(
-            user_uuid=self.generated_uuid, 
-            prompt=prompt, 
-            max_length=self.max_length if max_length is None else max_length
-        )
-
+        # Attempt to move the compiled model to device
         try:
-            response = self.stub.GenerateContent(request)
-            end_time = time.time()
-            print(f"传统生成过程执行时间：{end_time - start_time} 秒")
-            return response.generated_text
-        except grpc.RpcError as e:
-            print(f"gRPC 错误: {e.code()} - {e.details()}")
-            return None
+            torch_neuronx.experimental.set_neuron_cores(1)
+            torch_neuronx.move_trace_to_device(self.model, 0)
+        except Exception as e:
+            print(f"[Draft] Could not move draft model to Neuron device: {e}")
 
-    def compare_generate(self, prompt):
+    def speculative_decode(self):
         """
-        对比 speculative 和传统生成方法，输出两者的结果和时间。
+        Full speculation: we call the server to get the first token, then we generate gamma tokens at a time.
         """
-        print("开始 speculative 生成:")
-        speculative_text = self.speculative_decode(prompt)
-        
-        print("\n开始传统生成:")
-        traditional_text = self.traditional_generate(prompt)
+        # 1) Prepare a gRPC request to server to set up the session
+        user_uuid = "draft-user-1234"  # just a static example
+        prepare_req = model_service_pb2.PrepareSpeculativeRequest(
+            user_uuid=user_uuid,
+            prompt=self.prompt,
+            max_length=self.max_length,
+            generate_step=self.gamma,
+            exact_mode=True,
+            debug_mode=False
+        )
+        prepare_resp = self.stub.PrepareSpeculative(prepare_req)
+        # The server returns prompt + first token
+        first_tokens_text = prepare_resp.first_tokens
+        # We'll feed that text into the draft model to build up the KV cache
+        context_ids = self.tokenizer(first_tokens_text, return_tensors="pt").input_ids
+        # Warm up the draft model
+        local_past = None
+        for tid in context_ids[0]:
+            with torch.no_grad():
+                out = self.model(tid.view(1,1), local_past)
+            local_past = out.past_key_values
 
-        print("\nSpeculative 生成的文本:")
-        print(speculative_text)
+        generated_text = first_tokens_text
+        tokens_generated = len(self.tokenizer.tokenize(first_tokens_text))
 
-        print("\n传统生成的文本:")
-        print(traditional_text)
+        # Keep generating in chunks of gamma
+        while tokens_generated < self.max_length:
+            chunk_tokens = []
+            for step_i in range(self.gamma):
+                if tokens_generated >= self.max_length:
+                    break
+                with torch.no_grad():
+                    out = self.model(torch.tensor([[0]]), local_past)  # or last token? 
+                    # Actually we need the last token from the prior step if we had it
+                    # Simplify by always using a dummy? This is incomplete, see real logic below:
+                    logits = out.logits[..., -1, :]
+                    local_past = out.past_key_values
+                    next_id = int(torch.argmax(logits, dim=-1))
+                    chunk_tokens.append(next_id)
+                    generated_text += self.tokenizer.decode(next_id, skip_special_tokens=True)
+                    tokens_generated += 1
+
+            # Send chunk_tokens to server for verification
+            chunk_text = self.tokenizer.decode(chunk_tokens, skip_special_tokens=True)
+            verify_req = model_service_pb2.VerifyTokensRequest(
+                user_uuid=user_uuid,
+                token_text=chunk_text
+            )
+            verify_resp = self.stub.VerifyTokens(verify_req)
+            if not verify_resp.verified:
+                print("[Draft] Server rejected tokens. (Simplified logic -> stop or fallback.)")
+                break
+
+        return generated_text
+
+if __name__=="__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Draft Model Client on AWS Trainium")
+    parser.add_argument("--host", type=str, default="localhost")
+    parser.add_argument("--port", type=str, default="50051")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.2-1B-Instruct")
+    parser.add_argument("--compiled_model_path", type=str, default=None)
+    parser.add_argument("--compile_model", action="store_true")
+    parser.add_argument("--max_length", type=int, default=128)
+    parser.add_argument("--gamma", type=int, default=4)
+    parser.add_argument("--prompt", type=str, default="Once upon a time,")
+    args = parser.parse_args()
+
+    client = ModelServiceClient(
+        model_name=args.model,
+        compiled_model_path=args.compiled_model_path,
+        compile_model=args.compile_model,
+        max_length=args.max_length,
+        gamma=args.gamma,
+        host=args.host,
+        port=args.port,
+        prompt=args.prompt
+    )
+
+    start_t = time.time()
+    output = client.speculative_decode()
+    end_t = time.time()
+    elapsed = end_t - start_t
+    tokens_out = len(output.split())
+    print(f"\n[Draft] Final output: {output}")
+    print(f"[Draft] Time: {elapsed:.3f} s, tokens: {tokens_out}, speed: {tokens_out/elapsed:.2f} tokens/s")

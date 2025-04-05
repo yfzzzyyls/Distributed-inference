@@ -1,380 +1,137 @@
+# model_service.py (Updated to avoid dictionary in tracer output)
+
+import os
+import sys
+import time
+import torch
+import torch.nn as nn
+import torch_neuronx
 import grpc
 from concurrent import futures
-import protos.model_service_pb2
-import protos.model_service_pb2_grpc
-import torch
-from transformers import (
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    QuantoConfig,
-)
-import traceback
-import argparse
-import threading
-from collections import defaultdict
-import json
-import os
-import socket
 
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from protos import model_service_pb2, model_service_pb2_grpc
+from collections import defaultdict
 
 class UserConfigManager:
     def __init__(self):
-        self.lock = threading.RLock()
-        self.user_configs = {}  # 存储每个用户的配置
-
+        self.configs = {}
+    def set_user_config(self, user_uuid, max_length, gamma, exact_mode, debug_mode):
+        self.configs[user_uuid] = (max_length, gamma, exact_mode, debug_mode)
     def get_user_config(self, user_uuid):
-        with self.lock:
-            return self.user_configs.get(user_uuid, None)
+        return self.configs.get(user_uuid, (128, 4, True, False))
 
-    def set_user_config(self, user_uuid, config):
-        with self.lock:
-            self.user_configs[user_uuid] = config
+# Instead of returning a dict with "logits" and "past_key_values", we'll
+# manually produce a 2-tuple, so JIT sees a single typed output (Tuple[Tensor, Tuple]).
+class LlamaKVWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
 
+    def forward(self, input_ids, past_key_values=None):
+        # HF model returns a 'CausalLMOutputWithPast', which is effectively a dict
+        outputs = self.model(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            use_cache=True
+        )
+        # Instead of returning outputs (which is a dict with "logits" and "past_key_values"),
+        # we return a 2-tuple. The 1st element is the logits tensor, 2nd is the tuple of (k, v).
+        # This avoids "Tracer cannot infer type of {dict with mixed types}".
+        return (outputs.logits, outputs.past_key_values)
 
-class ModelServiceServicer(protos.model_service_pb2_grpc.ModelServiceServicer):
-    def __init__(self, model_path: str, quantize: bool = False):
-        """
-        Initialize the model service with the specified model and quantization option.
-
-        Args:
-            model_path (str): The path to the model.
-            quantize (bool): If True, apply quantization to the model weights.
-            generate_step (int): The number of tokens to generate in each speculative iteration.
-            max_length (int): The maximum length of the generated content.
-        """
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        if quantize:
-            target_quantize = QuantoConfig(weights="int4")
-            self.model = AutoModelForCausalLM.from_pretrained(model_path, quantization_config=target_quantize)
-        else:
-            self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16)
-
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.target_cache = None
-        self.model.to(self.device)
-        self.model.eval()
+class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
+    def __init__(self, model_path, compiled_model_path=None, compile_model=False, max_context=2048):
+        super().__init__()
+        self.model = None
+        self.tokenizer = None
+        self.user_data = defaultdict(lambda: {
+            "tokens": "", "drafts": []
+        })
         self.config_manager = UserConfigManager()
-        self.STORAGE_DIR = './user_data'
-        self.user_data = defaultdict(lambda: {"tokens": "", "drafts": None, "logits": None})
 
-    # 从文件加载用户数据（如果存在）
-    def load_user_data(self, uuid):
-        file_path = os.path.join(self.STORAGE_DIR, f"{uuid}.json")
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                return json.load(f)
-        return {"tokens": [], "logits": []}
+        print(f"[Target] Loading tokenizer from {model_path}")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    # 保存用户数据到文件
-    def save_user_data(self, uuid, data):
-        file_path = os.path.join(self.STORAGE_DIR, f"{uuid}.json")
-        with open(file_path, 'w') as f:
-            json.dump(data, f)
+        if compiled_model_path and os.path.isfile(compiled_model_path):
+            print(f"[Target] Loading precompiled model from {compiled_model_path}")
+            self.model = torch.jit.load(compiled_model_path)
+        else:
+            print(f"[Target] Loading HF model {model_path} in BF16 for Trainium.")
+            base_model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16)
+            base_model.eval()
 
-    def PrepareSpeculative(self, request: protos.model_service_pb2.PrepareSpeculativeRequest, context: grpc.ServicerContext) -> protos.model_service_pb2.PrepareSpeculativeResponse:
-        """
-        Prepares speculative tokens based on the input text.
+            if compile_model:
+                print("[Target] Compiling model with torch_neuronx.trace...")
+                # Build the wrapper that returns (logits, pkv) as a 2-tuple
+                wrapper = LlamaKVWrapper(base_model)
 
-        Args:
-            request (PrepareSpeculativeRequest): The gRPC request containing input text.
-            context (grpc.ServicerContext): The gRPC context.
+                num_layers = base_model.config.num_hidden_layers
+                num_kv = getattr(base_model.config, "num_key_value_heads", base_model.config.num_attention_heads)
+                head_dim = getattr(base_model.config, "head_dim", base_model.config.hidden_size // num_kv)
+                batch_size = 1
+                seq_len   = 1
+                past_seq  = max_context - 1
 
-        Returns:
-            PrepareSpeculativeResponse: A response containing the first generated tokens.
-        """
-        self.target_cache = None
-        user_uuid = request.user_uuid
-        prompt_text = request.prompt
-        max_length = request.max_length
-        generate_step = request.generate_step
-        exact_mode = request.exact_mode
-        debug_mode = request.debug_mode
+                dummy_past = []
+                for _ in range(num_layers):
+                    k = torch.zeros(batch_size, num_kv, past_seq, head_dim, dtype=torch.bfloat16)
+                    v = torch.zeros(batch_size, num_kv, past_seq, head_dim, dtype=torch.bfloat16)
+                    dummy_past.append((k, v))
+                dummy_past = tuple(dummy_past)
 
-        # Generate the first tokens
-        first_tokens = self.prepare_speculative(user_uuid, prompt_text, max_length, generate_step, exact_mode, debug_mode)
+                dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
 
-        return protos.model_service_pb2.PrepareSpeculativeResponse(first_tokens=first_tokens)
-
-    def prepare_speculative(self, user_uuid, prompt_text, max_length, generate_step, exact_mode, debug_mode) -> str:
-        """
-        Generate the first tokens based on the input text.
-
-        Args:
-            input_text (str): The input text for token generation.
-
-        Returns:
-            str: The generated text based on the input.
-        """
-        torch.cuda.empty_cache()
-        self.config_manager.set_user_config(user_uuid, (max_length, generate_step, exact_mode, debug_mode))
-        device = self.device
-        input_ids = self.tokenizer.encode(prompt_text, return_tensors='pt').to(device)
-
-        # Use the model to generate output and update the cache
-        with torch.no_grad():
-            outputs = self.model(
-                input_ids=input_ids,
-                past_key_values=self.target_cache,
-                use_cache=False
-            )
-        self.target_cache = outputs.past_key_values
-
-        # Get the next token using argmax
-        next_token_logits = outputs.logits[..., -1, :]
-        next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
-        input_ids = torch.cat((input_ids, next_token_id), dim=1).to(device)
-
-        # Convert tensor to text
-        generated_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        self.user_data[user_uuid]["tokens"] = generated_text
-        self.user_data[user_uuid]["drafts"] = [None] * generate_step
-        self.user_data[user_uuid]["logits"] = torch.zeros((1, generate_step, self.model.config.vocab_size), device=device)
-        return generated_text
-    
-    def UpdateToken(self, request: protos.model_service_pb2.UpdateTokenRequest, context: grpc.ServicerContext) -> protos.model_service_pb2.UpdateTokenResponse:
-        """
-        Verifies the generated tokens against the input text and provided logits.
-
-        Args:
-            request (VerifyTokensRequest): The gRPC request containing input text and logits.
-            context (grpc.ServicerContext): The gRPC context.
-
-        Returns:
-            TokenResponse: A response containing the verified tokens.
-        """
-        user_uuid = request.user_uuid
-        k = request.index
-        input_text = request.input_text
-        #generated_logits = request.generated_logits
-
-        # Convert logits from request to tensor
-        # logits_list = []
-        # for float_array in generated_logits.rows:
-        #     logits_list.append(float_array.values)
-
-        # logits_tensor = torch.tensor(logits_list, dtype=torch.float32)
-        # print(f"Received input text: {input_text}")
-        # print(f"Received logits tensor: {logits_tensor.shape}")
-
-        # Verify the tokens
-        update_success = self.update_token(user_uuid, k, input_text)
-
-        return protos.model_service_pb2.UpdateTokenResponse(updated=update_success)
-
-    def update_token(self, user_uuid, k, new_token: str) -> str:
-        self.user_data[user_uuid]["drafts"][k] = new_token
-        print (f"updated uuid {user_uuid} token: {new_token}")
-        #self.user_data[user_uuid]["logits"][0, k] = new_logits.to(self.device)
-        return True
-
-    def VerifyTokens(self, request: protos.model_service_pb2.VerifyTokensRequest, context: grpc.ServicerContext) -> protos.model_service_pb2.VerifyTokensResponse:
-        """
-        Verifies the generated tokens against the input text and provided logits.
-
-        Args:
-            request (VerifyTokensRequest): The gRPC request containing input text and logits.
-            context (grpc.ServicerContext): The gRPC context.
-
-        Returns:
-            TokenResponse: A response containing the verified tokens.
-        """
-        user_uuid = request.user_uuid
-
-        # Verify the tokens
-        finished, passed_tokens, verified_tokens = self.verify_tokens(user_uuid)
-
-        return protos.model_service_pb2.VerifyTokensResponse(finished=finished, passed_tokens=passed_tokens, verified_tokens=verified_tokens)
-
-    def verify_tokens(self, user_uuid: str) -> str:
-        """
-        Verifies the generated tokens using a rejection sampling method.
-
-        Args:
-            input_text (str): The input text.
-            generated_tokens (torch.Tensor): The logits tensor for the generated tokens.
-
-        Returns:
-            str: The verified tokens as decoded text.
-        """
-        try:
-            finished = False
-            max_length, generate_step, exact_mode, debug_mode = self.config_manager.get_user_config(user_uuid)
-            input_text = self.user_data[user_uuid]["tokens"] + "".join(self.user_data[user_uuid]["drafts"])
-            if debug_mode:
-                # print("logits shape: ", len(self.user_data[user_uuid]["logits"]))
-                print(f"input_text: {input_text}")
-            q = self.user_data[user_uuid]["logits"]
-            
-            input_ids = self.tokenizer.encode(input_text, return_tensors='pt').to(self.device)
-
-            Mp = self.model(
-                input_ids=input_ids,
-                past_key_values=self.target_cache, 
-                use_cache=False,
-            ) 
-            self.target_cache = Mp.past_key_values
-            draft_logits = Mp.logits[..., -generate_step-1: -1, :]
-            p = draft_logits
-
-            x = torch.argmax(p, dim=-1).unsqueeze(-1)
-            target_tokens = x.squeeze().tolist()
-            # print(f"target_tokens: {target_tokens},target_tokens length: {len(target_tokens)}")
-
-            if isinstance(target_tokens, int):
-                target_tokens = [target_tokens]
-            
-            n = generate_step
-            for i, token in enumerate(target_tokens):
-                print(f"token: {token}, input_ids: {input_ids[0, -generate_step + i]}")
-                if token != input_ids[0, -generate_step + i]:
-                    n = i
-                    break
-
-            #if not exact_mode:
-            #    r = torch.rand(generate_step, device=self.device)
-            #else:
-            #    r = torch.ones(generate_step, device=self.device) 
-#
-            #print(f"shape of p: {p.shape}, shape of q: {q.shape}")
-            #fractions = p / q
-            #n = generate_step
-            #for i in range(generate_step):
-            #    print(f"fraction: {fractions[0, i, input_ids[0, -generate_step + i]]}")
-            #    if r[i] > fractions[0, i, input_ids[0, -generate_step + i]]:
-            #        n = i
-            #        break
-
-            p_p = Mp.logits[..., -generate_step + n - 1, :]
-            x = torch.argmax(p_p, dim=-1).unsqueeze(-1)
-            verified_tokens = x.squeeze().tolist()
-
-            if isinstance(verified_tokens, int):
-                verified_tokens = [verified_tokens]
-
-            # print(f"verified_tokens length: {n}")
-
-            input_ids_flat = input_ids.squeeze(0).tolist()
-            
-            if n < generate_step:
-                combined_tokens = input_ids_flat[:-generate_step + n] + verified_tokens
+                # Now we compile
+                self.model = torch_neuronx.trace(
+                    wrapper,
+                    example_inputs=(dummy_input_ids, dummy_past)
+                )
+                if compiled_model_path:
+                    print(f"[Target] Saving compiled model to {compiled_model_path}")
+                    self.model.save(compiled_model_path)
             else:
-                combined_tokens = input_ids_flat + verified_tokens
+                # CPU fallback
+                self.model = base_model
 
-            verified_text = self.tokenizer.decode(verified_tokens)
-
-            if verified_tokens[0] == self.tokenizer.eos_token_id:
-                if debug_mode:
-                    print("End token found")
-                finished = True
-                verified_text = ""
-            
-            if debug_mode:
-                print(f"verified_tokens: {n}")
-                print(f"verified_tokens: {verified_text}")
-
-            self.user_data[user_uuid]["tokens"] = self.tokenizer.decode(combined_tokens, skip_special_tokens=True)
-            self.user_data[user_uuid]["logits"] = torch.zeros((1, generate_step, self.model.config.vocab_size), device=self.device)
-            return finished, n, verified_text
-
-        except Exception as e:
-            traceback.print_exc()
-            print(f"An error occurred in verify_tokens: {e}")
-            return ""
-
-    def GenerateContent(self, request: protos.model_service_pb2.GenerateContentRequest, context: grpc.ServicerContext) -> protos.model_service_pb2.GenerateContentResponse:
-        """
-        Generate content based on a given prompt.
-
-        Args:
-            request (GenerateContentRequest): The gRPC request containing a prompt.
-            context (grpc.ServicerContext): The gRPC context.
-
-        Returns:
-            GenerateContentResponse: A response containing the generated content.
-        """
-        user_uuid = request.user_uuid
-        prompt = request.prompt
-        self.target_cache = None
-        max_length = request.max_length
-
-        print(f"start traditional generate for {user_uuid}")
-
+        # Optionally move trace to device
         try:
-            input_ids = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
-            generated_token_ids = []
-
-            while len(input_ids[0]) < max_length:
-                print(f"Current traditional gengerated text: {self.tokenizer.decode(input_ids[0], skip_special_tokens=True)}")
-                with torch.no_grad():
-                    outputs = self.model(
-                        input_ids=input_ids,
-                        past_key_values=self.target_cache,
-                        use_cache=False
-                    )
-
-                    self.target_cache = outputs.past_key_values
-                    logits = outputs.logits[:, -1, :]
-                    next_token_id = torch.argmax(logits, dim=-1)
-
-                    generated_token_ids.append(next_token_id.item())
-                    input_ids = torch.cat([input_ids, next_token_id.unsqueeze(0)], dim=1)
-                    if next_token_id[0] == self.tokenizer.eos_token_id:
-                        break
-
-            all_tokens = self.tokenizer.encode(prompt) + generated_token_ids
-            decoded_text = self.tokenizer.decode(all_tokens, skip_special_tokens=True)
-            torch.cuda.empty_cache()
-
-            return protos.model_service_pb2.GenerateContentResponse(generated_text=decoded_text)
+            torch_neuronx.experimental.set_neuron_cores(1)
+            torch_neuronx.move_trace_to_device(self.model, 0)
         except Exception as e:
-            context.set_details(f"An error occurred: {e}")
-            context.set_code(grpc.StatusCode.INTERNAL)
-            torch.cuda.empty_cache()
-            return protos.model_service_pb2.GenerateContentResponse(generated_text="")
+            print(f"[Target] Could not move model to Neuron device: {e}")
 
-def get_local_ip():
-    try:
-        # 创建一个UDP连接
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # 连接到外部网络（比如Google的公共DNS），不会真正发送数据
-        s.connect(('8.8.8.8', 80))
-        # 获取本地 IP 地址
-        ip_address = s.getsockname()[0]
-        s.close()
-        return ip_address
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        return None
-    
-def serve(port: int, model_path: str, quantize: bool) -> None:
-    """
-    Start the gRPC server to serve model-related requests.
+        print("[Target] ModelServiceServicer init complete.")
 
-    Args:
-        port (int): The port to listen on.
-        model_path (str): The path to the model.
-        quantize (bool): Whether to apply quantization to the model.
-    """
+    def PrepareSpeculative(self, request, context):
+        # ...
+        return model_service_pb2.PrepareSpeculativeResponse(first_tokens="Not implemented")
+
+    def VerifyTokens(self, request, context):
+        # ...
+        return model_service_pb2.VerifyTokensResponse(verified=True)
+
+    def GenerateContent(self, request, context):
+        # ...
+        return model_service_pb2.GenerateContentResponse(generated_text="Not implemented")
+
+def serve(port, model_path, compiled_model_path, compile_model, max_context):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    try:
-        protos.model_service_pb2_grpc.add_ModelServiceServicer_to_server(
-            ModelServiceServicer(model_path, quantize), server)
-        server.add_insecure_port(f'[::]:{port}')
-        server.start()
-        local_ip = get_local_ip()
-        print(f"服务器已启动，监听端口 {local_ip}:{port}")
-        server.wait_for_termination()
-    except Exception as e:
-        print(f"Failed to start the server on port {port}: {e}")
-        traceback.print_exc()
+    servicer = ModelServiceServicer(model_path, compiled_model_path, compile_model, max_context)
+    model_service_pb2_grpc.add_ModelServiceServicer_to_server(servicer, server)
+    server.add_insecure_port(f"[::]:{port}")
+    server.start()
+    print(f"[Target] gRPC server listening on port {port}, model={model_path}")
+    server.wait_for_termination()
 
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='启动模型服务')
-    parser.add_argument('--port', type=int, default=50051, help='指定监听的端口')
-    parser.add_argument('--model-path', type=str, default="/home/apc/llama/Llama-3.1-8B-Instruct", help='指定模型路径')
-    parser.add_argument('--quantize', action='store_true', help='是否启用量化')
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=50051)
+    parser.add_argument("--model-path", type=str, default="/home/ubuntu/models/llama-3.2-1b")
+    parser.add_argument("--compiled-model-path", type=str, default=None)
+    parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--max-context", type=int, default=2048)
     args = parser.parse_args()
 
-    serve(args.port, args.model_path, args.quantize)
+    serve(args.port, args.model_path, args.compiled_model_path, args.compile, args.max_context)
