@@ -1,4 +1,4 @@
-# model_service.py (Fixed "num_hidden_layers" issue by storing base_config early)
+# model_service.py (Final nested approach, no flattening)
 
 import os
 import sys
@@ -15,20 +15,17 @@ from protos import model_service_pb2, model_service_pb2_grpc
 
 def create_empty_past(num_layers, num_kv, past_seq, head_dim):
     """
-    Build a flattened tuple of (k,v) pairs, each shaped [1, num_kv, past_seq, head_dim].
-    Matches the compile-time shape, so we never pass None to the traced forward pass.
+    Build a *nested* tuple of length num_layers, where each item is (k, v).
+    Each (k, v) shaped [batch_size=1, num_kv, past_seq, head_dim].
+    This must match how we traced the model.
     """
-    dummy_past_pairs = []
+    dummy_past_list = []
     for _ in range(num_layers):
         k = torch.zeros((1, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
         v = torch.zeros((1, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
-        dummy_past_pairs.append((k, v))
-
-    # Flatten each (k,v) so total length = 2 * num_layers
-    flattened = []
-    for (k, v) in dummy_past_pairs:
-        flattened.extend([k, v])
-    return tuple(flattened)
+        dummy_past_list.append((k, v))
+    # Return a nested tuple: ((k1,v1),(k2,v2), ...)
+    return tuple(dummy_past_list)
 
 class UserConfigManager:
     def __init__(self):
@@ -38,7 +35,7 @@ class UserConfigManager:
     def get_user_config(self, user_uuid):
         return self.configs.get(user_uuid, (128, 4, True, False))
 
-# Wrapper that returns (logits, pkv) as a 2-tuple
+# This wrapper ensures the model returns (logits, pkv) as a 2-tuple, avoiding dict outputs.
 class LlamaKVWrapper(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -50,6 +47,7 @@ class LlamaKVWrapper(nn.Module):
             past_key_values=past_key_values,
             use_cache=True
         )
+        # Return (logits, pkv) instead of a dict
         return (outputs.logits, outputs.past_key_values)
 
 class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
@@ -62,16 +60,15 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
         print(f"[Target] Loading tokenizer from {model_path}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-        # We'll store base_config from the HF model (before tracing) so we can build empty_past
+        base_model = None
         base_config = None
-        base_model = None  # track this if we do CPU fallback or compile
 
         if compiled_model_path and os.path.isfile(compiled_model_path):
-            # If we have a precompiled model, load it
+            # Load a precompiled model
             print(f"[Target] Loading precompiled model from {compiled_model_path}")
             self.model = torch.jit.load(compiled_model_path)
         else:
-            # Load from HF
+            # Load HF model from disk
             print(f"[Target] Loading HF model {model_path} in BF16 for Trainium.")
             base_model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16)
             base_model.eval()
@@ -88,13 +85,13 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
                 seq_len   = 1
                 past_seq  = max_context - 1
 
-                # Build a dummy past
-                dummy_past = []
+                # Build a *nested* past: ((k,v),(k,v),...)
+                dummy_past_list = []
                 for _ in range(num_layers):
                     k = torch.zeros((batch_size, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
                     v = torch.zeros((batch_size, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
-                    dummy_past.append((k, v))
-                dummy_past = tuple(dummy_past)
+                    dummy_past_list.append((k, v))
+                dummy_past = tuple(dummy_past_list)
 
                 dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
 
@@ -106,27 +103,23 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
                 # CPU fallback
                 self.model = base_model
 
-        # If we have a base_model, we can read config from it.
-        # If we've loaded a compiled model, we won't have base_model or config. We'll just guess.
+        # If we do have base_model, keep base_config. Otherwise fallback
         if base_model is not None:
             base_config = base_model.config
 
         if base_config is not None:
-            # We'll build empty_past from config
             num_layers = base_config.num_hidden_layers
             num_kv = getattr(base_config, "num_key_value_heads", base_config.num_attention_heads)
             head_dim = getattr(base_config, "head_dim", base_config.hidden_size // num_kv)
             past_seq = max_context - 1
         else:
-            # Fallback if we only have a compiled model
-            # Hardcode your model shape or default to 16-layer, 8-KV, head_dim=64, etc.
-            print("[Target] No base_config found; using fallback shapes.")
+            print("[Target] No base_config found; using fallback shapes (16-layer, 8-kv, head_dim=64).")
             num_layers = 16
             num_kv = 8
             head_dim = 64
             past_seq = max_context - 1
 
-        # Create the "empty" flattened past
+        # Build a nested "empty" past
         self.empty_past = create_empty_past(num_layers, num_kv, past_seq, head_dim)
 
         # Optionally move trace to device
@@ -149,18 +142,17 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
         # Convert prompt -> input IDs
         input_ids = self.tokenizer(prompt_text, return_tensors="pt").input_ids
 
-        # Start with an empty flattened past
+        # Start with a nested "empty" past
         past_key_values = self.empty_past
 
         with torch.no_grad():
             for _ in range(max_new_tokens):
-                # Positional call to the compiled model
+                # Two positional args
                 logits, past_key_values = self.model(input_ids, past_key_values)
-                # Pick the top token
+                # pick top token
                 next_token_id = torch.argmax(logits[..., -1, :], dim=-1).unsqueeze(0)
                 input_ids = torch.cat([input_ids, next_token_id], dim=-1)
 
-        # Decode
         first_tokens_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
         return model_service_pb2.PrepareSpeculativeResponse(first_tokens=first_tokens_text)
 
@@ -171,14 +163,7 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
         return model_service_pb2.GenerateContentResponse(generated_text="Not implemented")
 
 def serve(port, model_path, compiled_model_path, compile_model, max_context):
-    server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=10),
-        options=[
-            ('grpc.max_receive_message_length', 100 * 1024 * 1024),
-            ('grpc.max_send_message_length', 100 * 1024 * 1024),
-            ('grpc.max_metadata_size', 100 * 1024 * 1024)
-        ]
-    )    
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     servicer = ModelServiceServicer(model_path, compiled_model_path, compile_model, max_context)
     model_service_pb2_grpc.add_ModelServiceServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")
