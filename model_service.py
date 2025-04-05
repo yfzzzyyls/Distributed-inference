@@ -171,7 +171,14 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
         return model_service_pb2.GenerateContentResponse(generated_text="Not implemented")
 
 def serve(port, model_path, compiled_model_path, compile_model, max_context):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=10),
+        options=[
+            ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+            ('grpc.max_send_message_length', 100 * 1024 * 1024),
+            ('grpc.max_metadata_size', 100 * 1024 * 1024)
+        ]
+    )    
     servicer = ModelServiceServicer(model_path, compiled_model_path, compile_model, max_context)
     model_service_pb2_grpc.add_ModelServiceServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{port}")

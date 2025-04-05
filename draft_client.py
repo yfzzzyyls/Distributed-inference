@@ -77,9 +77,15 @@ class ModelServiceClient:
         self.prompt = prompt
 
         server_addr = f"{host}:{port}"
-        self.channel = grpc.insecure_channel(server_addr)
+        self.channel = grpc.insecure_channel(
+            server_addr,
+            options=[
+                ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+                ('grpc.max_send_message_length', 100 * 1024 * 1024),
+                ('grpc.max_metadata_size', 100 * 1024 * 1024)
+            ]
+        )
         self.stub = model_service_pb2_grpc.ModelServiceStub(self.channel)
-
         # Load or compile the draft model
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         base_model = None
