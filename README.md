@@ -15,9 +15,9 @@ This repository has been adapted for **single-device** AWS Trainium usage with *
 2. **Download Models** (1B draft, 3B target) from Hugging Face. For example:
 
    ```
-   mkdir -p models
-   huggingface-cli login --token YOUR_TOKEN
-   python -c "
+   cd ~
+   mkdir models
+   huggingface-cli download --token YOURTOKEN meta-llama/Llama-3.2-1B --local-dir /home/ubuntu/models/llama-3.2-1b
    ```
 
 from transformers import AutoModelForCausalLM
