@@ -13,7 +13,7 @@ from protos import model_service_pb2, model_service_pb2_grpc
 def create_empty_past(num_layers, num_kv, past_seq, head_dim):
     """
     Build a nested tuple: ((k1,v1),(k2,v2),...).
-    Each (k,v) shaped [1, num_kv, past_seq, head_dim].
+    Each (k,v) is [1, num_kv, past_seq, head_dim].
     """
     dummy_past_list = []
     for _ in range(num_layers):
@@ -77,7 +77,7 @@ class ModelServiceClient:
             if compile_model:
                 print("[Draft] Compiling draft model with torch_neuronx.trace…")
 
-                # We'll compile so the draft can handle up to [1,32]
+                # We'll compile so the draft can handle [1,32]
                 seq_len = 32
                 past_seq = max_length - 1
 
@@ -124,7 +124,7 @@ class ModelServiceClient:
         # Build a nested empty past
         self.empty_past = create_empty_past(num_layers, num_kv, past_seq, head_dim)
 
-        # Remove set_neuron_cores and move_trace_to_device so it can multi-core
+        # Not pinning to single core
         print("[Draft] ModelServiceClient init complete.")
 
     def speculative_decode(self):
@@ -140,10 +140,22 @@ class ModelServiceClient:
         prepare_resp = self.stub.PrepareSpeculative(prepare_req)
         first_tokens_text = prepare_resp.first_tokens
 
+        # 1) Convert to input_ids => shape [1, N]
         context_ids = self.tokenizer(first_tokens_text, return_tensors="pt").input_ids
+        
+        # 2) Pad up to [1,32] if needed
+        real_len = context_ids.size(1)
+        if real_len < 32:
+            pad_len = 32 - real_len
+            # If your model has a real pad token, use that. We use 0 here:
+            pad_tensor = torch.zeros((1, pad_len), dtype=torch.long)
+            context_ids = torch.cat([context_ids, pad_tensor], dim=1)  # shape [1,32]
+        elif real_len > 32:
+            raise ValueError(f"Prompt too long ({real_len} tokens); compile_time=32")
+
         local_past = self.empty_past
 
-        # Single pass for all prompt tokens (up to 32)
+        # Single pass for all prompt tokens => shape [1,32]
         with torch.no_grad():
             logits, local_past = self.model(context_ids, local_past)
 
@@ -156,7 +168,7 @@ class ModelServiceClient:
                 if tokens_generated >= self.max_length:
                     break
                 with torch.no_grad():
-                    # Single-token pass, shape [1,1]
+                    # Single-token pass => shape [1,1]
                     single_ids = torch.zeros((1,1), dtype=torch.long)
                     logits, local_past = self.model(single_ids, local_past)
                     next_id = int(torch.argmax(logits[..., -1, :], dim=-1))

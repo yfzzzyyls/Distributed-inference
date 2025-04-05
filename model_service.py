@@ -14,8 +14,9 @@ from protos import model_service_pb2, model_service_pb2_grpc
 
 def create_empty_past(num_layers, num_kv, past_seq, head_dim):
     """
-    Build a nested tuple of length num_layers, where each item is (k, v).
-    Each shaped [batch_size=1, num_kv, past_seq, head_dim].
+    Build a nested tuple of length num_layers, each (k,v) shaped:
+      [1, num_kv, past_seq, head_dim].
+    We compile a "past" dimension matching 'max_context-1'.
     """
     dummy_past_list = []
     for _ in range(num_layers):
@@ -33,6 +34,7 @@ class UserConfigManager:
         return self.configs.get(user_uuid, (128, 4, True, False))
 
 class LlamaKVWrapper(nn.Module):
+    """Wraps model to return (logits, pkv) as a 2-tuple instead of a dict."""
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -63,7 +65,7 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
             print(f"[Target] Loading precompiled model from {compiled_model_path}")
             self.model = torch.jit.load(compiled_model_path)
         else:
-            # Load HF model
+            # Load HF model from disk
             print(f"[Target] Loading HF model {model_path} in BF16 for Trainium.")
             base_model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16)
             base_model.eval()
@@ -78,7 +80,7 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
                 head_dim = base_config.head_dim
                 batch_size = 1
 
-                # We'll compile so the model can handle up to 32 tokens in a single pass
+                # We'll compile so the model can handle up to 32 tokens
                 seq_len = 32
                 past_seq = max_context - 1  # e.g. 127 if max_context=128
 
@@ -90,9 +92,10 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
                     dummy_past_list.append((k, v))
                 dummy_past = tuple(dummy_past_list)
 
-                # Our dummy input_ids is [1,32]
+                # Our dummy_input_ids is shape [1,32]
                 dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
 
+                # Trace
                 self.model = torch_neuronx.trace(wrapper, (dummy_input_ids, dummy_past))
                 if compiled_model_path:
                     print(f"[Target] Saving compiled model to {compiled_model_path}")
@@ -101,35 +104,43 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
                 # CPU fallback
                 self.model = base_model
 
+        # If we have a base_model, keep base_config
         if base_model is not None:
             base_config = base_model.config
 
+        # If we only have a compiled model, fallback
         if base_config is not None:
             num_layers = base_config.num_hidden_layers
             num_kv = getattr(base_config, "num_key_value_heads", base_config.num_attention_heads)
             head_dim = base_config.head_dim
             past_seq = max_context - 1
         else:
-            print("[Target] No base_config found; using fallback shapes (16-layer, 8-kv, head_dim=64).")
+            print("[Target] No base_config found; fallback shapes (16-layer, 8-kv).")
             num_layers = 16
             num_kv = 8
             head_dim = 64
             past_seq = max_context - 1
 
-        # Build a nested empty past
+        # Build an "empty" past
         self.empty_past = create_empty_past(num_layers, num_kv, past_seq, head_dim)
 
-        # Remove single-core pin; let the compiler use multiple cores if needed
-        # (no torch_neuronx.experimental.set_neuron_cores)
-        # (no move_trace_to_device)
+        # We do NOT pin to single core – let the runtime pick multiple cores if needed
         print("[Target] ModelServiceServicer init complete.")
 
     def PrepareSpeculative(self, request, context):
+        """
+        We'll generate up to 'request.generate_step' new tokens
+        in a single pass if desired. But be aware we compiled for [1,32].
+        """
         prompt_text = request.prompt
         max_new_tokens = request.generate_step
 
-        # Input can be up to 32 tokens in shape [1,32]
+        # Input can be up to 32 tokens shape [1,32]
         input_ids = self.tokenizer(prompt_text, return_tensors="pt").input_ids
+
+        # We do not pad here, but the draft side does.
+        # If user prompt is bigger than 32, or smaller, the draft should handle it.
+
         past_key_values = self.empty_past
 
         with torch.no_grad():
