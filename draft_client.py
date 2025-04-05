@@ -17,13 +17,8 @@ class LlamaKVWrapper(torch.nn.Module):
         self.num_layers = num_layers
 
     def forward(self, input_ids, past_key_values=None):
-        """
-        Re-chunk a flattened 'past_key_values' into the expected
-        tuple((k1,v1), (k2,v2), ...) so LLaMA's code can do:
-            key_states, value_states = past_key_values[layer_idx]
-        """
+        # Re-chunk your past_key_values if it's flattened
         if past_key_values is not None:
-            # We expect 2 * num_layers items in the flattened tuple
             if len(past_key_values) == 2 * self.num_layers:
                 chunked = []
                 for i in range(0, len(past_key_values), 2):
@@ -33,16 +28,19 @@ class LlamaKVWrapper(torch.nn.Module):
                 past_key_values = tuple(chunked)
             else:
                 raise ValueError(
-                    f"Got {len(past_key_values)} items in 'past_key_values', "
-                    f"but expected {2 * self.num_layers} for {self.num_layers} layers."
+                    f"Got {len(past_key_values)} items, expected {2 * self.num_layers}."
                 )
 
+        # Call the underlying Hugging Face LLaMA
         outputs = self.base_model(
             input_ids=input_ids,
             past_key_values=past_key_values,
             use_cache=True
         )
-        return outputs
+
+        # Instead of returning a dict, return (Tensor, Tuple[...])
+        # This is a stable 2-tuple for the tracer: (logits, nested-tuple-of-tensors)
+        return (outputs.logits, outputs.past_key_values)
 
 class ModelServiceClient:
     def __init__(self,
@@ -145,7 +143,8 @@ class ModelServiceClient:
             with torch.no_grad():
                 # out = self.model(tid.view(1,1), local_past)
                 out = self.model(input_ids=tid.view(1,1), past_key_values=local_past)
-            local_past = out.past_key_values
+            # local_past = out.past_key_values
+            logits, local_past = out
 
         generated_text = first_tokens_text
         tokens_generated = len(self.tokenizer.tokenize(first_tokens_text))
@@ -161,8 +160,9 @@ class ModelServiceClient:
                     out = self.model(input_ids=torch.tensor([[0]]),past_key_values=local_past)
                     # Actually we need the last token from the prior step if we had it
                     # Simplify by always using a dummy? This is incomplete, see real logic below:
+                    logits, local_past = out
                     logits = out.logits[..., -1, :]
-                    local_past = out.past_key_values
+                    # local_past = out.past_key_values
                     next_id = int(torch.argmax(logits, dim=-1))
                     chunk_tokens.append(next_id)
                     generated_text += self.tokenizer.decode(next_id, skip_special_tokens=True)
