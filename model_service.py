@@ -103,9 +103,25 @@ class ModelServiceServicer(model_service_pb2_grpc.ModelServiceServicer):
 
         print("[Target] ModelServiceServicer init complete.")
 
+    # def PrepareSpeculative(self, request, context):
+    #     # ...
+    #     return model_service_pb2.PrepareSpeculativeResponse(first_tokens="Not implemented")
+    
     def PrepareSpeculative(self, request, context):
-        # ...
-        return model_service_pb2.PrepareSpeculativeResponse(first_tokens="Not implemented")
+        prompt_text = request.prompt
+        # Convert prompt to input_ids on CPU (or GPU if you have one)
+        input_ids = self.tokenizer(prompt_text, return_tensors="pt").input_ids
+
+        # Generate exactly 1 new token from the prompt
+        with torch.no_grad():
+            outputs = self.model.generate(
+                input_ids=input_ids,
+                max_new_tokens=1,
+                do_sample=False  # or True for sampling
+            )
+        # Decode the entire sequence (prompt + 1 new token)
+        first_tokens_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return model_service_pb2.PrepareSpeculativeResponse(first_tokens=first_tokens_text)
 
     def VerifyTokens(self, request, context):
         # ...
