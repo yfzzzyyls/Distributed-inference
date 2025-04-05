@@ -96,7 +96,8 @@ class ModelServiceClient:
         local_past = None
         for tid in context_ids[0]:
             with torch.no_grad():
-                out = self.model(tid.view(1,1), local_past)
+                # out = self.model(tid.view(1,1), local_past)
+                out = self.model(input_ids=tid.view(1,1), past_key_values=local_past)
             local_past = out.past_key_values
 
         generated_text = first_tokens_text
@@ -109,7 +110,8 @@ class ModelServiceClient:
                 if tokens_generated >= self.max_length:
                     break
                 with torch.no_grad():
-                    out = self.model(torch.tensor([[0]]), local_past)  # or last token? 
+                    # out = self.model(torch.tensor([[0]]), local_past)  # or last token? 
+                    out = self.model(input_ids=torch.tensor([[0]]),past_key_values=local_past)
                     # Actually we need the last token from the prior step if we had it
                     # Simplify by always using a dummy? This is incomplete, see real logic below:
                     logits = out.logits[..., -1, :]

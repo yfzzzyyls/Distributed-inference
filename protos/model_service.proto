@@ -29,6 +29,7 @@ message UpdateTokenResponse {
 
 message VerifyTokensRequest {
   string user_uuid = 1;
+  string token_text = 2;
 }
 
 message VerifyTokensResponse {

@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import protos.batch_pb2 as batch__pb2
+import batch_pb2 as batch__pb2
 
 GRPC_GENERATED_VERSION = '1.66.2'
 GRPC_VERSION = grpc.__version__
