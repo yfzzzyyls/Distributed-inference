@@ -1,5 +1,4 @@
-# draft_client.py (Final nested approach, no flattening)
-
+# draft_client.py
 import os
 import time
 import grpc
@@ -13,8 +12,8 @@ from protos import model_service_pb2, model_service_pb2_grpc
 
 def create_empty_past(num_layers, num_kv, past_seq, head_dim):
     """
-    Build a *nested* tuple: ((k1,v1),(k2,v2),...).
-    Each (k,v) shaped [1, num_kv, past_seq, head_dim], matching compile-time shape.
+    Build a nested tuple: ((k1,v1),(k2,v2),...).
+    Each (k,v) shaped [1, num_kv, past_seq, head_dim].
     """
     dummy_past_list = []
     for _ in range(num_layers):
@@ -30,15 +29,10 @@ class LlamaKVWrapper(torch.nn.Module):
         self.num_layers = num_layers
 
     def forward(self, input_ids, past_key_values=None):
-        # Re-chunk if it's the nested shape
-        if past_key_values is not None:
-            if len(past_key_values) == self.num_layers:
-                # Already ((k,v),(k,v),...)
-                pass
-            else:
-                raise ValueError(
-                    f"Expected {self.num_layers} items, got {len(past_key_values)}"
-                )
+        if past_key_values is not None and len(past_key_values) != self.num_layers:
+            raise ValueError(
+                f"Expected {self.num_layers} (k,v) pairs, got {len(past_key_values)}"
+            )
         outputs = self.base_model(
             input_ids=input_ids,
             past_key_values=past_key_values,
@@ -62,12 +56,10 @@ class ModelServiceClient:
         self.gamma = gamma
         self.prompt = prompt
 
-        # Connect to the server
         server_addr = f"{host}:{port}"
         self.channel = grpc.insecure_channel(server_addr)
         self.stub = model_service_pb2_grpc.ModelServiceStub(self.channel)
 
-        # Load or compile the draft model
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         base_model = None
@@ -84,7 +76,9 @@ class ModelServiceClient:
 
             if compile_model:
                 print("[Draft] Compiling draft model with torch_neuronx.trace…")
-                seq_len = 1
+
+                # We'll compile so the draft can handle up to [1,32]
+                seq_len = 32
                 past_seq = max_length - 1
 
                 num_layers = base_config.num_hidden_layers
@@ -92,7 +86,7 @@ class ModelServiceClient:
                 head_dim = base_config.head_dim
                 batch_size = 1
 
-                # Build a *nested* dummy past
+                # Nested dummy past
                 dummy_past_list = []
                 for _ in range(num_layers):
                     k = torch.zeros((batch_size, num_kv, past_seq, head_dim), dtype=torch.bfloat16)
@@ -100,7 +94,9 @@ class ModelServiceClient:
                     dummy_past_list.append((k, v))
                 dummy_past = tuple(dummy_past_list)
 
+                # [1,32] input_ids
                 dummy_input_ids = torch.zeros((batch_size, seq_len), dtype=torch.long)
+
                 wrapper = LlamaKVWrapper(base_model, num_layers)
                 self.model = torch_neuronx.trace(wrapper, (dummy_input_ids, dummy_past))
 
@@ -125,15 +121,11 @@ class ModelServiceClient:
             head_dim = 64
             past_seq = self.max_length - 1
 
-        # Create a nested "empty_past"
+        # Build a nested empty past
         self.empty_past = create_empty_past(num_layers, num_kv, past_seq, head_dim)
 
-        # Attempt to move the compiled model to device (optional)
-        try:
-            torch_neuronx.experimental.set_neuron_cores([0])
-            torch_neuronx.move_trace_to_device(self.model, 0)
-        except Exception as e:
-            print(f"[Draft] Could not move draft model to Neuron device: {e}")
+        # Remove set_neuron_cores and move_trace_to_device so it can multi-core
+        print("[Draft] ModelServiceClient init complete.")
 
     def speculative_decode(self):
         user_uuid = "draft-user-1234"
@@ -149,26 +141,24 @@ class ModelServiceClient:
         first_tokens_text = prepare_resp.first_tokens
 
         context_ids = self.tokenizer(first_tokens_text, return_tensors="pt").input_ids
-        local_past = self.empty_past  # never None
+        local_past = self.empty_past
 
-        # Warm up with the initial tokens
-        for tid in context_ids[0]:
-            with torch.no_grad():
-                out = self.model(tid.view(1,1), local_past)
-            logits, local_past = out
+        # Single pass for all prompt tokens (up to 32)
+        with torch.no_grad():
+            logits, local_past = self.model(context_ids, local_past)
 
         generated_text = first_tokens_text
         tokens_generated = len(self.tokenizer.tokenize(first_tokens_text))
 
-        # Generate in chunks of gamma
         while tokens_generated < self.max_length:
             chunk_tokens = []
             for _ in range(self.gamma):
                 if tokens_generated >= self.max_length:
                     break
                 with torch.no_grad():
-                    out = self.model(torch.tensor([[0]]), local_past)
-                    logits, local_past = out
+                    # Single-token pass, shape [1,1]
+                    single_ids = torch.zeros((1,1), dtype=torch.long)
+                    logits, local_past = self.model(single_ids, local_past)
                     next_id = int(torch.argmax(logits[..., -1, :], dim=-1))
                     chunk_tokens.append(next_id)
                     generated_text += self.tokenizer.decode(next_id, skip_special_tokens=True)
