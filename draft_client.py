@@ -10,6 +10,20 @@ import gevent.pool
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from protos import model_service_pb2, model_service_pb2_grpc
 
+class LlamaKVWrapper(torch.nn.Module):
+    def __init__(self, base_model):
+        super().__init__()
+        self.base_model = base_model
+
+    def forward(self, input_ids, past_key_values=None):
+        # explicitly call the base model with named "past_key_values"
+        outputs = self.base_model(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            use_cache=True
+        )
+        return outputs
+
 class ModelServiceClient:
     def __init__(self,
                  model_name: str,
@@ -157,6 +171,12 @@ if __name__=="__main__":
         port=args.port,
         prompt=args.prompt
     )
+
+    # If we're just compiling, skip the gRPC call to server
+    if args.compile_model:
+        print("[Draft] Model compiled and saved. Exiting.")
+        import sys
+        sys.exit(0)
 
     start_t = time.time()
     output = client.speculative_decode()
